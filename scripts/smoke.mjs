@@ -50,7 +50,7 @@ await page.waitForTimeout(500)
 // Spy on setData so we can tell "never called" apart from "called with junk".
 await page.evaluate(() => {
   window.__setDataCalls = []
-  const src = window.__map.getSource('placed-countries')
+  const src = window.__map.getSource('countries-static')
   const orig = src.setData.bind(src)
   src.setData = (d) => {
     window.__setDataCalls.push({
@@ -71,12 +71,12 @@ await page.waitForTimeout(2500)
 
 const state = await page.evaluate(() => {
   const mp = window.__map
-  const src = mp.getSource('placed-countries')
+  const src = mp.getSource('countries-static')
   return {
     hasSource: !!src,
     styleLoaded: mp.isStyleLoaded(),
-    sourceLoaded: mp.isSourceLoaded('placed-countries'),
-    renderedFeatures: mp.queryRenderedFeatures({ layers: ['placed-countries-fill'] }).length,
+    sourceLoaded: mp.isSourceLoaded('countries-static'),
+    renderedFeatures: mp.queryRenderedFeatures({ layers: ['countries-active-fill', 'countries-static-fill'] }).length,
     sidebarRows: document.querySelectorAll('.placed li').length,
     center: mp.getCenter(),
     zoom: mp.getZoom(),
@@ -109,7 +109,7 @@ if (state.renderedFeatures > 0) {
     const { width, height } = mp.getCanvas().getBoundingClientRect()
     for (let y = 40; y < height - 40; y += 12) {
       for (let x = 360; x < width - 40; x += 12) {
-        if (mp.queryRenderedFeatures([x, y], { layers: ['placed-countries-fill'] }).length)
+        if (mp.queryRenderedFeatures([x, y], { layers: ['countries-active-fill', 'countries-static-fill'] }).length)
           return { x, y }
       }
     }
@@ -118,7 +118,7 @@ if (state.renderedFeatures > 0) {
   if (!grab) throw new Error('could not find a point inside the country')
 
   const latBefore = await page.evaluate(
-    () => window.__map.queryRenderedFeatures({ layers: ['placed-countries-fill'] })[0]
+    () => window.__map.queryRenderedFeatures({ layers: ['countries-active-fill', 'countries-static-fill'] })[0]
       .geometry.coordinates.flat(3).filter((_, i) => i % 2 === 1)
       .reduce((a, b, _, arr) => a + b / arr.length, 0)
   )
@@ -131,7 +131,7 @@ if (state.renderedFeatures > 0) {
 
   const after = await page.evaluate(() => ({
     sidebar: document.querySelector('.placed li .meta')?.innerText.replace(/\n/g, ' | '),
-    meanLat: window.__map.queryRenderedFeatures({ layers: ['placed-countries-fill'] })[0]
+    meanLat: window.__map.queryRenderedFeatures({ layers: ['countries-active-fill', 'countries-static-fill'] })[0]
       ?.geometry.coordinates.flat(3).filter((_, i) => i % 2 === 1)
       .reduce((a, b, _, arr) => a + b / arr.length, 0),
   }))

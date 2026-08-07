@@ -16,9 +16,23 @@ import { loadCountries, formatArea } from './lib/countries'
 import type { Country } from './lib/countries'
 import './App.css'
 
-const SOURCE_ID = 'placed-countries'
-const FILL_LAYER = 'placed-countries-fill'
-const LINE_LAYER = 'placed-countries-line'
+/**
+ * Two sources, not one. Everything sitting still lives in `static`, which is
+ * written only when a placement actually changes; whatever is being dragged
+ * lives alone in `active`, which is rewritten every frame.
+ *
+ * With a single combined source, each mouse-move re-serialised every placed
+ * country and made MapLibre's worker re-tile all of them — so leaving Canada
+ * (68k vertices) parked on the map dropped dragging Ireland from 75fps to 26.
+ */
+const STATIC_SOURCE = 'countries-static'
+const ACTIVE_SOURCE = 'countries-active'
+const STATIC_FILL = 'countries-static-fill'
+const STATIC_LINE = 'countries-static-line'
+const ACTIVE_FILL = 'countries-active-fill'
+const ACTIVE_LINE = 'countries-active-line'
+/** Active first: it renders on top, so it should win hit-testing too. */
+const FILL_LAYERS = [ACTIVE_FILL, STATIC_FILL]
 
 /**
  * Vertex budget for the geometry drawn *while* a country is being manipulated.
@@ -64,7 +78,14 @@ const createStyle = (): maplibregl.StyleSpecification => ({
       attribution:
         '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors © <a href="https://carto.com/attributions">CARTO</a>',
     },
-    [SOURCE_ID]: {
+    [STATIC_SOURCE]: {
+      type: 'geojson',
+      data: { type: 'FeatureCollection', features: [] },
+      // Lets us call updateData() with per-feature diffs instead of resending
+      // the whole collection. uid is already unique per placed country.
+      promoteId: 'uid',
+    },
+    [ACTIVE_SOURCE]: {
       type: 'geojson',
       data: { type: 'FeatureCollection', features: [] },
     },
@@ -72,15 +93,27 @@ const createStyle = (): maplibregl.StyleSpecification => ({
   layers: [
     { id: 'basemap', type: 'raster', source: 'basemap' },
     {
-      id: FILL_LAYER,
+      id: STATIC_FILL,
       type: 'fill',
-      source: SOURCE_ID,
+      source: STATIC_SOURCE,
       paint: { 'fill-color': ['get', 'color'], 'fill-opacity': 0.55 },
     },
     {
-      id: LINE_LAYER,
+      id: STATIC_LINE,
       type: 'line',
-      source: SOURCE_ID,
+      source: STATIC_SOURCE,
+      paint: { 'line-color': ['get', 'color'], 'line-width': 1.5 },
+    },
+    {
+      id: ACTIVE_FILL,
+      type: 'fill',
+      source: ACTIVE_SOURCE,
+      paint: { 'fill-color': ['get', 'color'], 'fill-opacity': 0.55 },
+    },
+    {
+      id: ACTIVE_LINE,
+      type: 'line',
+      source: ACTIVE_SOURCE,
       paint: { 'line-color': ['get', 'color'], 'line-width': 1.5 },
     },
   ],
@@ -131,7 +164,7 @@ export default function App() {
     // listening keeps this independent of which one-shot event fires when.
     let raf = 0
     const waitForStyle = () => {
-      if (map.getSource(SOURCE_ID)) setMapReady(true)
+      if (map.getSource(STATIC_SOURCE)) setMapReady(true)
       else raf = requestAnimationFrame(waitForStyle)
     }
     waitForStyle()
@@ -150,32 +183,93 @@ export default function App() {
   }, [])
 
   // --- geometry ------------------------------------------------------------
-  // Every outline is rebuilt from its home position each time, never from its
-  // previous drawn state, so repeated drags can't accumulate drift or spin.
-  const features = useMemo(
-    () =>
-      placed.map((p): Feature => {
-        const source = p.uid === activeUid ? p.dragGeometry : p.homeGeometry
-        const place = createPlacement(p.homeCentroid, p.target, p.bearing)
-        return {
+  // Every outline is rebuilt from its home position, never from its previous
+  // drawn state, so repeated drags can't accumulate drift or spin. The cache
+  // means "rebuilt" only actually happens when that country's own placement
+  // changed — dragging one country doesn't re-transform any of the others.
+  const cacheRef = useRef(new Map<string, { key: string; feature: Feature }>())
+
+  const { staticFeatures, activeFeatures } = useMemo(() => {
+    const cache = cacheRef.current
+    const statics: Feature[] = []
+    const actives: Feature[] = []
+
+    for (const p of placed) {
+      const isActive = p.uid === activeUid
+      const key = `${isActive ? 'a' : 's'}|${p.target[0]}|${p.target[1]}|${p.bearing}`
+      const hit = cache.get(p.uid)
+      let feature: Feature
+      if (hit?.key === key) {
+        feature = hit.feature
+      } else {
+        feature = {
           type: 'Feature',
-          geometry: transformGeometry(source, place),
+          geometry: transformGeometry(
+            isActive ? p.dragGeometry : p.homeGeometry,
+            createPlacement(p.homeCentroid, p.target, p.bearing)
+          ),
           properties: { uid: p.uid, color: p.color, name: p.name },
         }
-      }),
-    [placed, activeUid]
-  )
+        cache.set(p.uid, { key, feature })
+      }
+      ;(isActive ? actives : statics).push(feature)
+    }
 
-  const syncSource = useCallback((fs: Feature[]) => {
-    const src = mapRef.current?.getSource(SOURCE_ID) as
-      | maplibregl.GeoJSONSource
-      | undefined
+    if (cache.size > placed.length) {
+      const live = new Set(placed.map((p) => p.uid))
+      for (const uid of cache.keys()) if (!live.has(uid)) cache.delete(uid)
+    }
+    return { staticFeatures: statics, activeFeatures: actives }
+  }, [placed, activeUid])
+
+  const setSourceData = useCallback((id: string, fs: Feature[]) => {
+    const src = mapRef.current?.getSource(id) as maplibregl.GeoJSONSource | undefined
     src?.setData({ type: 'FeatureCollection', features: fs })
   }, [])
 
+  // Static layer: send a per-feature diff, never the whole collection.
+  //
+  // Picking a country up removes exactly one feature and putting it down adds
+  // one back. Resending the collection instead would re-serialise every
+  // bystander on both events — with Canada parked on the map that meant
+  // pushing ~277k coordinates through the worker twice per drag, felt as a
+  // hitch the moment you grabbed anything.
+  //
+  // Unchanged countries come back as identical objects from the cache, so
+  // reference equality is enough to spot what actually moved.
+  const lastStatic = useRef(new Map<string, Feature>())
   useEffect(() => {
-    if (mapReady) syncSource(features)
-  }, [features, mapReady, syncSource])
+    if (!mapReady) return
+    const src = mapRef.current?.getSource(STATIC_SOURCE) as
+      | maplibregl.GeoJSONSource
+      | undefined
+    if (!src) return
+
+    const prev = lastStatic.current
+    const next = new Map(
+      staticFeatures.map((f) => [String(f.properties?.uid), f])
+    )
+
+    const diff: maplibregl.GeoJSONSourceDiff = {}
+    for (const uid of prev.keys())
+      if (!next.has(uid)) (diff.remove ??= []).push(uid)
+    for (const [uid, f] of next) {
+      const before = prev.get(uid)
+      if (!before) (diff.add ??= []).push(f)
+      else if (before !== f)
+        (diff.update ??= []).push({ id: uid, newGeometry: f.geometry })
+    }
+
+    if (!diff.remove && !diff.add && !diff.update) return
+    lastStatic.current = next
+    src.updateData(diff)
+  }, [staticFeatures, mapReady])
+
+  // Active layer: rewritten every frame, but it holds at most one country and
+  // that country is under the vertex budget.
+  useEffect(() => {
+    if (mapReady) setSourceData(ACTIVE_SOURCE, activeFeatures)
+  }, [activeFeatures, mapReady, setSourceData])
 
   // --- dragging ------------------------------------------------------------
   useEffect(() => {
@@ -183,7 +277,7 @@ export default function App() {
     if (!map || !mapReady) return
 
     const onDown = (e: maplibregl.MapMouseEvent | maplibregl.MapTouchEvent) => {
-      const hit = map.queryRenderedFeatures(e.point, { layers: [FILL_LAYER] })[0]
+      const hit = map.queryRenderedFeatures(e.point, { layers: FILL_LAYERS })[0]
       if (!hit) return
       const uid = String(hit.properties?.uid)
       const p = placed.find((x) => x.uid === uid)
@@ -203,7 +297,7 @@ export default function App() {
     const onMove = (e: maplibregl.MapMouseEvent | maplibregl.MapTouchEvent) => {
       const drag = dragRef.current
       if (!drag) {
-        const over = map.queryRenderedFeatures(e.point, { layers: [FILL_LAYER] })
+        const over = map.queryRenderedFeatures(e.point, { layers: FILL_LAYERS })
         map.getCanvas().style.cursor = over.length ? 'grab' : ''
         return
       }

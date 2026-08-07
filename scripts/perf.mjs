@@ -17,7 +17,7 @@ for (const country of ['Canada', 'Russia', 'Ireland']) {
     const { width, height } = mp.getCanvas().getBoundingClientRect()
     for (let y = 30; y < height - 30; y += 8)
       for (let x = 360; x < width - 30; x += 8)
-        if (mp.queryRenderedFeatures([x, y], { layers: ['placed-countries-fill'] }).length)
+        if (mp.queryRenderedFeatures([x, y], { layers: ['countries-active-fill', 'countries-static-fill'] }).length)
           return { x, y }
     return null
   })
@@ -54,7 +54,7 @@ for (const country of ['Canada', 'Russia', 'Ireland']) {
   })
   const verts = await page.evaluate(() =>
     JSON.stringify(
-      window.__map.getSource('placed-countries')._data ?? {}
+      window.__map.getSource('countries-static')._data ?? {}
     ).match(/-?\d+\.\d+/g)?.length ?? 0
   )
   console.log(

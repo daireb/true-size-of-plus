@@ -22,7 +22,7 @@ const grab = await page.evaluate(() => {
   const { width, height } = mp.getCanvas().getBoundingClientRect()
   for (let y = 30; y < height - 30; y += 8)
     for (let x = 360; x < width - 30; x += 8)
-      if (mp.queryRenderedFeatures([x, y], { layers: ['placed-countries-fill'] }).length)
+      if (mp.queryRenderedFeatures([x, y], { layers: ['countries-active-fill', 'countries-static-fill'] }).length)
         return { x, y }
   return null
 })

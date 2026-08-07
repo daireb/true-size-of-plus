@@ -12,7 +12,8 @@
     "smoke": "node scripts/smoke.mjs",
     "perf": "node scripts/perf.mjs",
     "data": "node scripts/build-data.mjs",
-    "visual": "node scripts/visual.mjs"
+    "visual": "node scripts/visual.mjs",
+    "perf:bystander": "node scripts/perf-bystander.mjs"
   },
   "dependencies": {
     "d3-geo": "^3.1.1",

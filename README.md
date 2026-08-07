@@ -90,6 +90,29 @@ and actually moves when dragged.
 - Latitudes are clamped near the poles, where Mercator goes to infinity.
 - Antarctica is excluded — it has no meaningful Mercator representation.
 
+## Why there are two map sources
+
+`countries-static` holds everything sitting still; `countries-active` holds only
+whatever is being dragged. This is a performance fix, not tidiness.
+
+With one combined source, every mouse-move rewrote the whole FeatureCollection,
+so MapLibre re-serialised and re-tiled every placed country on every frame.
+Leaving Canada parked on the map dropped dragging Ireland from ~75fps to ~26,
+and three heavy bystanders took it to ~19.
+
+Two things fix it. Placed geometry is cached per country, keyed on that
+country's own target and bearing, so dragging one never re-transforms the
+others. And the static source is updated through `updateData()` with a
+per-feature diff rather than `setData()` — picking a country up removes one
+feature and putting it down adds one back, instead of resending ~277k
+coordinates twice per drag.
+
+What remains is the GPU drawing those outlines, which is unavoidable while they
+are on screen. `npm run perf:bystander` tracks the regression; a probe that
+kept Canada in the source but filtered it out of the layers returned frame
+times to baseline (20.4ms vs 22.1ms alone, against 32.6ms drawn), which is how
+we know the source path is clean.
+
 ## Rotation
 
 Each placed country has a rotation slider (-180° to 180°, clockwise). Clicking
