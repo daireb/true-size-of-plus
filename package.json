@@ -8,7 +8,7 @@
     "build": "tsc -b && vite build",
     "lint": "oxlint",
     "preview": "vite preview",
-    "verify": "node --experimental-strip-types scripts/verify-geo.ts",
+    "verify": "node --experimental-strip-types scripts/verify-geo.ts && node --experimental-strip-types scripts/verify-search.ts",
     "smoke": "node scripts/smoke.mjs",
     "perf": "node scripts/perf.mjs",
     "data": "node scripts/build-data.mjs",

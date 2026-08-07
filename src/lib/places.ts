@@ -15,10 +15,40 @@ export interface Place {
   kind: PlaceKind
   /** Parent country, for regions. */
   parent?: string
+  /** Accent-folded name + parent, precomputed for search. See fold(). */
+  folded: string
+  foldedParent: string
   geometry: Geometry
   /** Filled on first use — see metricsOf. */
   metrics?: { centroid: LonLat; areaKm2: number }
 }
+
+/**
+ * Characters that survive NFD decomposition — their diacritic is part of the
+ * letter rather than a combining mark, so stripping marks leaves them intact.
+ */
+const STUBBORN: Record<string, string> = {
+  ø: 'o', Ø: 'o', đ: 'd', Đ: 'd', ð: 'd', Ð: 'd',
+  ə: 'e', ı: 'i', ł: 'l', Ł: 'l', ħ: 'h', Ħ: 'h',
+  œ: 'oe', Œ: 'oe', æ: 'ae', Æ: 'ae', ß: 'ss',
+  þ: 'th', Þ: 'th', '–': '-', '’': "'",
+}
+
+/**
+ * Normalise a string for searching: "Ōita" -> "oita", "Kyōto" -> "kyoto",
+ * "Entre Ríos" -> "entre rios".
+ *
+ * 706 of the 4,589 region names carry diacritics, so without this most of them
+ * are unreachable from an ordinary keyboard. NFD splits an accented letter into
+ * base + combining mark and the regex drops the marks; the handful of letters
+ * that don't decompose that way are mapped explicitly.
+ */
+export const fold = (s: string) =>
+  s
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^\u0000-\u007f]/g, (c) => STUBBORN[c] ?? c)
+    .toLowerCase()
 
 /**
  * Centroid and true area, computed on demand.
@@ -57,6 +87,9 @@ const load = async (file: string, object: string, kind: PlaceKind): Promise<Plac
       name: f.properties.name,
       kind,
       parent: f.properties.admin,
+      // Folded once at load, not per keystroke across 4,847 entries.
+      folded: fold(f.properties.name),
+      foldedParent: f.properties.admin ? fold(f.properties.admin) : '',
       geometry: f.geometry,
     }))
     .filter((p) => p.name !== 'Antarctica')
@@ -75,23 +108,29 @@ export const formatArea = (km2: number) =>
     : `${Math.round(km2).toLocaleString()} km²`
 
 /**
- * Rank matches for the search box. Prefix hits beat interior hits, countries
- * beat regions, then shorter names — so "geor" offers Georgia the country
- * before Georgia the US state, and "flo" finds Florida rather than a dozen
- * places with "flo" buried in the middle.
+ * Rank matches for the search box.
+ *
+ * Both sides are accent-folded, so "oita" finds "Ōita" and "kyoto" finds
+ * "Kyōto". Prefix hits beat interior hits, name hits beat parent-country hits,
+ * and countries beat regions — so "geor" offers Georgia the country before
+ * Georgia the US state, and "japan" offers Japan before its prefectures.
  */
 export const searchPlaces = (places: Place[], query: string, limit = 8) => {
-  const q = query.trim().toLowerCase()
+  const q = fold(query.trim())
   if (!q) return []
   const scored: { p: Place; score: number }[] = []
   for (const p of places) {
-    const name = p.name.toLowerCase()
-    const at = name.indexOf(q)
-    if (at === -1) continue
-    let score = at === 0 ? 0 : 100
-    if (name === q) score -= 10
+    const at = p.folded.indexOf(q)
+    let score: number
+    if (at !== -1) {
+      score = at === 0 ? 0 : 100
+      if (p.folded === q) score -= 10
+    } else if (p.foldedParent.includes(q)) {
+      // Still useful ("japan" -> its prefectures) but always below name hits.
+      score = 300
+    } else continue
     if (p.kind === 'region') score += 5
-    score += Math.min(name.length, 40) / 100
+    score += Math.min(p.folded.length, 40) / 100
     scored.push({ p, score })
   }
   return scored

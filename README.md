@@ -89,12 +89,26 @@ and actually moves when dragged.
   clipped cleanly.
 - Latitudes are clamped near the poles, where Mercator goes to infinity.
 - Antarctica is excluded — it has no meaningful Mercator representation.
+- Only two levels exist: countries and admin_1 regions. Informal groupings such
+  as Japan's Kyushu are not in the data as shapes. Natural Earth does tag some
+  admin_1 rows with a `region` grouping, but it is unreliable — its Kyushu
+  covers 5 prefectures and omits Saga and Nagasaki — so it is not used.
 
 ## Regions
 
 As well as the 258 countries, `public/data/regions-10m.json` holds **4,589
 sub-national regions** (Natural Earth admin_1) — US states, Scottish council
 areas, Japanese prefectures, Irish counties. Search finds both.
+
+Search is **accent-folded**: 706 of the region names carry diacritics, so
+without folding most of them are unreachable from an ordinary keyboard. "oita"
+finds Ōita, "kyoto" finds Kyōto, "entre rios" finds Entre Ríos. NFD splits an
+accented letter into base plus combining mark and the marks are dropped; the 13
+letters that don't decompose that way (ø Ø Đ Ð ð ə ı œ æ ħ Ħ Ł ß) are mapped
+explicitly. `npm run verify` asserts all 4,847 names fold to pure ASCII.
+
+Typing a country name also surfaces its regions, ranked below any direct name
+match — "japan" gives Japan, then its prefectures.
 
 Region names need their parent country shown, and not just for tidiness: 28 of
 them collide with a country name (Belgium has a Luxembourg province, Nigeria a
