@@ -90,6 +90,28 @@ and actually moves when dragged.
 - Latitudes are clamped near the poles, where Mercator goes to infinity.
 - Antarctica is excluded — it has no meaningful Mercator representation.
 
+## Regions
+
+As well as the 258 countries, `public/data/regions-10m.json` holds **4,589
+sub-national regions** (Natural Earth admin_1) — US states, Scottish council
+areas, Japanese prefectures, Irish counties. Search finds both.
+
+Region names need their parent country shown, and not just for tidiness: 28 of
+them collide with a country name (Belgium has a Luxembourg province, Nigeria a
+Niger state) and 95 repeat across countries — La Paz appears three times. The
+search ranks prefix matches over interior ones and countries over regions, so
+"Georgia" offers the country before the US state.
+
+The file is 8.1 MB (2.7 MB gzipped), so it is fetched **in the background after
+countries** rather than blocking startup: countries are searchable at ~1.0s,
+regions at ~1.5s. Centroid and area are computed lazily per place — walking
+4,589 geometries up front janked the main thread for numbers only ever needed
+for the handful of rows actually shown.
+
+1:50m is not a usable fallback here. It sounds cheap at 0.21 MB gzipped but
+holds only 294 features covering 9 countries — no Scotland, no Bavaria, no
+Irish counties.
+
 ## Why there are two map sources
 
 `countries-static` holds everything sitting still; `countries-active` holds only

@@ -82,9 +82,9 @@ body {
   border-color: var(--accent);
 }
 
+/* In flow, not absolutely positioned: the panel scrolls its own overflow, so
+   an absolute dropdown gets clipped the moment it has more than one result. */
 .results {
-  position: absolute;
-  z-index: 3;
   width: 100%;
   margin: 4px 0 0;
   padding: 4px;
@@ -92,13 +92,12 @@ body {
   background: var(--panel-soft);
   border: 1px solid var(--line);
   border-radius: 8px;
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
 }
 
 .results button {
   display: flex;
   justify-content: space-between;
-  align-items: baseline;
+  align-items: center;
   gap: 8px;
   width: 100%;
   padding: 7px 8px;
@@ -113,6 +112,28 @@ body {
 
 .results button:hover {
   background: rgba(110, 168, 254, 0.16);
+}
+
+.hit {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+
+.hit em {
+  font-size: 10.5px;
+  font-style: normal;
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.loading {
+  margin: 6px 0 0;
+  font-size: 11px;
+  color: var(--muted);
 }
 
 .results small {

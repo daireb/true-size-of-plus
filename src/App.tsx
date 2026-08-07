@@ -12,8 +12,8 @@ import {
   clamp,
 } from './lib/geo'
 import type { LonLat } from './lib/geo'
-import { loadCountries, formatArea } from './lib/countries'
-import type { Country } from './lib/countries'
+import { loadCountries, loadRegions, metricsOf, formatArea, searchPlaces } from './lib/places'
+import type { Place } from './lib/places'
 import './App.css'
 
 /**
@@ -50,6 +50,8 @@ const PALETTE = [
 interface Placed {
   uid: string
   name: string
+  kind: Place['kind']
+  parent?: string
   color: string
   areaKm2: number
   /** Full-detail outline, at its real-world position. Never mutated. */
@@ -126,7 +128,9 @@ export default function App() {
   const mapRef = useRef<maplibregl.Map | null>(null)
   const [mapReady, setMapReady] = useState(false)
 
-  const [countries, setCountries] = useState<Country[]>([])
+  const [countries, setCountries] = useState<Place[]>([])
+  const [regions, setRegions] = useState<Place[]>([])
+  const [regionsPending, setRegionsPending] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [query, setQuery] = useState('')
   const [placed, setPlaced] = useState<Placed[]>([])
@@ -137,6 +141,12 @@ export default function App() {
 
   useEffect(() => {
     loadCountries().then(setCountries).catch((e) => setError(String(e)))
+    // Regions are ~8 MB and the app is fully usable without them, so they load
+    // in the background rather than holding up first paint.
+    loadRegions()
+      .then(setRegions)
+      .catch(() => {})
+      .finally(() => setRegionsPending(false))
   }, [])
 
   // --- map setup -----------------------------------------------------------
@@ -340,35 +350,42 @@ export default function App() {
   }, [mapReady, placed])
 
   // --- actions -------------------------------------------------------------
-  const addCountry = (c: Country) => {
+  const addPlace = (c: Place) => {
+    const { centroid, areaKm2 } = metricsOf(c)
     const dragGeometry = simplifyGeometry(c.geometry, DRAG_BUDGET)
     setPlaced((prev) => [
       ...prev,
       {
-        uid: `${c.id}-${prev.length}-${c.name}`,
+        uid: `${c.id}-${prev.length}`,
         name: c.name,
+        kind: c.kind,
+        parent: c.parent,
         color: PALETTE[prev.length % PALETTE.length],
-        areaKm2: c.areaKm2,
+        areaKm2,
         homeGeometry: c.geometry,
         dragGeometry,
-        homeCentroid: c.centroid,
-        target: c.centroid,
+        homeCentroid: centroid,
+        target: centroid,
         bearing: 0,
         simplified: dragGeometry !== c.geometry,
       },
     ])
     setQuery('')
-    mapRef.current?.flyTo({ center: c.centroid, zoom: 2.4, duration: 900 })
+    // Regions are far smaller than countries, so zoom to fit rather than fixed.
+    mapRef.current?.flyTo({
+      center: centroid,
+      zoom: c.kind === 'region' ? 4 : 2.4,
+      duration: 900,
+    })
   }
 
   const update = (uid: string, patch: Partial<Placed>) =>
     setPlaced((prev) => prev.map((p) => (p.uid === uid ? { ...p, ...patch } : p)))
 
-  const matches = useMemo(() => {
-    const q = query.trim().toLowerCase()
-    if (!q) return []
-    return countries.filter((c) => c.name.toLowerCase().includes(q)).slice(0, 8)
-  }, [query, countries])
+  const matches = useMemo(
+    () => searchPlaces([...countries, ...regions], query),
+    [query, countries, regions]
+  )
 
   return (
     <div className="app">
@@ -388,17 +405,25 @@ export default function App() {
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             placeholder={
-              countries.length ? 'Search a country…' : 'Loading countries…'
+              countries.length
+                ? 'Search a country or region…'
+                : 'Loading countries…'
             }
             disabled={!countries.length}
           />
+          {query.trim() && regionsPending && (
+            <p className="loading">Still loading regions…</p>
+          )}
           {matches.length > 0 && (
             <ul className="results">
               {matches.map((c) => (
                 <li key={c.id}>
-                  <button onClick={() => addCountry(c)}>
-                    <span>{c.name}</span>
-                    <small>{formatArea(c.areaKm2)}</small>
+                  <button onClick={() => addPlace(c)}>
+                    <span className="hit">
+                      {c.name}
+                      {c.parent && <em>{c.parent}</em>}
+                    </span>
+                    <small>{formatArea(metricsOf(c).areaKm2)}</small>
                   </button>
                 </li>
               ))}
@@ -419,7 +444,10 @@ export default function App() {
                   <span className="swatch" style={{ background: p.color }} />
                   <div className="meta">
                     <strong>{p.name}</strong>
-                    <small>{formatArea(p.areaKm2)} · true area</small>
+                    <small>
+                      {formatArea(p.areaKm2)} · true area
+                      {p.parent ? ` · ${p.parent}` : ''}
+                    </small>
                     {moved && (
                       <small className={ratio > 1 ? 'up' : 'down'}>
                         drawn {ratio.toFixed(2)}× its home size
@@ -473,7 +501,8 @@ export default function App() {
 
         {placed.length === 0 && (
           <p className="hint">
-            Try Greenland — then drag it down to the equator.
+            Try Greenland — then drag it down to the equator. Regions work
+            too: Florida, Scotland, Hokkaido.
           </p>
         )}
         {placed.some((p) => p.simplified) && (
