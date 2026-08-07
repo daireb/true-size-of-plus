@@ -1,0 +1,398 @@
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import * as maplibregl from 'maplibre-gl'
+import type { Feature, Geometry } from 'geojson'
+import 'maplibre-gl/dist/maplibre-gl.css'
+
+import {
+  createPlacement,
+  transformGeometry,
+  simplifyGeometry,
+  countVertices,
+  mercatorScale,
+  clamp,
+} from './lib/geo'
+import type { LonLat } from './lib/geo'
+import { loadCountries, formatArea } from './lib/countries'
+import type { Country } from './lib/countries'
+import './App.css'
+
+const SOURCE_ID = 'placed-countries'
+const FILL_LAYER = 'placed-countries-fill'
+const LINE_LAYER = 'placed-countries-line'
+
+/**
+ * Vertex budget for the geometry drawn *while* a country is being manipulated.
+ * Anything already under this is dragged at full detail and never simplified;
+ * only the handful of genuinely huge outlines (Canada is 68k vertices at 1:10m)
+ * get decimated, and they snap back to full detail the moment you let go.
+ */
+const DRAG_BUDGET = 3000
+
+const PALETTE = [
+  '#e6194b', '#3cb44b', '#4363d8', '#f58231', '#911eb4',
+  '#008080', '#f032e6', '#9a6324', '#800000', '#000075',
+]
+
+interface Placed {
+  uid: string
+  name: string
+  color: string
+  areaKm2: number
+  /** Full-detail outline, at its real-world position. Never mutated. */
+  homeGeometry: Geometry
+  /** Simplified stand-in used during interaction; same object if under budget. */
+  dragGeometry: Geometry
+  homeCentroid: LonLat
+  /** Where the centroid currently sits. The whole transform derives from this. */
+  target: LonLat
+  /** Manual spin in degrees, clockwise. */
+  bearing: number
+  simplified: boolean
+}
+
+const createStyle = (): maplibregl.StyleSpecification => ({
+  version: 8,
+  sources: {
+    basemap: {
+      type: 'raster',
+      tiles: [
+        'https://a.basemaps.cartocdn.com/light_all/{z}/{x}/{y}@2x.png',
+        'https://b.basemaps.cartocdn.com/light_all/{z}/{x}/{y}@2x.png',
+        'https://c.basemaps.cartocdn.com/light_all/{z}/{x}/{y}@2x.png',
+      ],
+      tileSize: 256,
+      attribution:
+        '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors © <a href="https://carto.com/attributions">CARTO</a>',
+    },
+    [SOURCE_ID]: {
+      type: 'geojson',
+      data: { type: 'FeatureCollection', features: [] },
+    },
+  },
+  layers: [
+    { id: 'basemap', type: 'raster', source: 'basemap' },
+    {
+      id: FILL_LAYER,
+      type: 'fill',
+      source: SOURCE_ID,
+      paint: { 'fill-color': ['get', 'color'], 'fill-opacity': 0.55 },
+    },
+    {
+      id: LINE_LAYER,
+      type: 'line',
+      source: SOURCE_ID,
+      paint: { 'line-color': ['get', 'color'], 'line-width': 1.5 },
+    },
+  ],
+})
+
+const wrapLon = (lon: number) => ((((lon + 180) % 360) + 360) % 360) - 180
+
+export default function App() {
+  const containerRef = useRef<HTMLDivElement>(null)
+  const mapRef = useRef<maplibregl.Map | null>(null)
+  const [mapReady, setMapReady] = useState(false)
+
+  const [countries, setCountries] = useState<Country[]>([])
+  const [error, setError] = useState<string | null>(null)
+  const [query, setQuery] = useState('')
+  const [placed, setPlaced] = useState<Placed[]>([])
+  /** Whoever is mid-drag or mid-rotate; drawn from the simplified geometry. */
+  const [activeUid, setActiveUid] = useState<string | null>(null)
+
+  const dragRef = useRef<{ uid: string; grab: LonLat; from: LonLat } | null>(null)
+
+  useEffect(() => {
+    loadCountries().then(setCountries).catch((e) => setError(String(e)))
+  }, [])
+
+  // --- map setup -----------------------------------------------------------
+  useEffect(() => {
+    if (!containerRef.current || mapRef.current) return
+
+    const map = new maplibregl.Map({
+      container: containerRef.current,
+      style: createStyle(),
+      center: [0, 20],
+      zoom: 1.6,
+      maxZoom: 8,
+      renderWorldCopies: true,
+      dragRotate: false,
+    })
+    map.addControl(new maplibregl.NavigationControl({ showCompass: false }), 'top-right')
+    map.touchZoomRotate.disableRotation()
+
+    // Styles are injected by JS, so the container can still be 0x0 when the
+    // map is constructed — it would then latch onto a 400x300 canvas.
+    const ro = new ResizeObserver(() => map.resize())
+    ro.observe(containerRef.current)
+
+    // Wait for the style to parse before the first setData. Polling rather than
+    // listening keeps this independent of which one-shot event fires when.
+    let raf = 0
+    const waitForStyle = () => {
+      if (map.getSource(SOURCE_ID)) setMapReady(true)
+      else raf = requestAnimationFrame(waitForStyle)
+    }
+    waitForStyle()
+
+    mapRef.current = map
+    // Exposed for the Playwright smoke test and for poking at from the console.
+    ;(window as unknown as { __map: maplibregl.Map }).__map = map
+
+    return () => {
+      cancelAnimationFrame(raf)
+      ro.disconnect()
+      map.remove()
+      mapRef.current = null
+      setMapReady(false)
+    }
+  }, [])
+
+  // --- geometry ------------------------------------------------------------
+  // Every outline is rebuilt from its home position each time, never from its
+  // previous drawn state, so repeated drags can't accumulate drift or spin.
+  const features = useMemo(
+    () =>
+      placed.map((p): Feature => {
+        const source = p.uid === activeUid ? p.dragGeometry : p.homeGeometry
+        const place = createPlacement(p.homeCentroid, p.target, p.bearing)
+        return {
+          type: 'Feature',
+          geometry: transformGeometry(source, place),
+          properties: { uid: p.uid, color: p.color, name: p.name },
+        }
+      }),
+    [placed, activeUid]
+  )
+
+  const syncSource = useCallback((fs: Feature[]) => {
+    const src = mapRef.current?.getSource(SOURCE_ID) as
+      | maplibregl.GeoJSONSource
+      | undefined
+    src?.setData({ type: 'FeatureCollection', features: fs })
+  }, [])
+
+  useEffect(() => {
+    if (mapReady) syncSource(features)
+  }, [features, mapReady, syncSource])
+
+  // --- dragging ------------------------------------------------------------
+  useEffect(() => {
+    const map = mapRef.current
+    if (!map || !mapReady) return
+
+    const onDown = (e: maplibregl.MapMouseEvent | maplibregl.MapTouchEvent) => {
+      const hit = map.queryRenderedFeatures(e.point, { layers: [FILL_LAYER] })[0]
+      if (!hit) return
+      const uid = String(hit.properties?.uid)
+      const p = placed.find((x) => x.uid === uid)
+      if (!p) return
+
+      e.preventDefault()
+      dragRef.current = {
+        uid,
+        grab: [e.lngLat.lng, e.lngLat.lat],
+        from: p.target,
+      }
+      setActiveUid(uid)
+      map.dragPan.disable()
+      map.getCanvas().style.cursor = 'grabbing'
+    }
+
+    const onMove = (e: maplibregl.MapMouseEvent | maplibregl.MapTouchEvent) => {
+      const drag = dragRef.current
+      if (!drag) {
+        const over = map.queryRenderedFeatures(e.point, { layers: [FILL_LAYER] })
+        map.getCanvas().style.cursor = over.length ? 'grab' : ''
+        return
+      }
+      // Only the target point moves. The outline is re-derived from home, so
+      // this stays a pure function of where the cursor is now.
+      const target: LonLat = [
+        wrapLon(drag.from[0] + (e.lngLat.lng - drag.grab[0])),
+        clamp(drag.from[1] + (e.lngLat.lat - drag.grab[1]), -85, 85),
+      ]
+      setPlaced((prev) =>
+        prev.map((p) => (p.uid === drag.uid ? { ...p, target } : p))
+      )
+    }
+
+    const onUp = () => {
+      if (!dragRef.current) return
+      dragRef.current = null
+      setActiveUid(null)
+      map.dragPan.enable()
+      map.getCanvas().style.cursor = ''
+    }
+
+    map.on('mousedown', onDown)
+    map.on('touchstart', onDown)
+    map.on('mousemove', onMove)
+    map.on('touchmove', onMove)
+    map.on('mouseup', onUp)
+    map.on('touchend', onUp)
+    map.on('mouseout', onUp)
+
+    return () => {
+      map.off('mousedown', onDown)
+      map.off('touchstart', onDown)
+      map.off('mousemove', onMove)
+      map.off('touchmove', onMove)
+      map.off('mouseup', onUp)
+      map.off('touchend', onUp)
+      map.off('mouseout', onUp)
+    }
+  }, [mapReady, placed])
+
+  // --- actions -------------------------------------------------------------
+  const addCountry = (c: Country) => {
+    const dragGeometry = simplifyGeometry(c.geometry, DRAG_BUDGET)
+    setPlaced((prev) => [
+      ...prev,
+      {
+        uid: `${c.id}-${prev.length}-${c.name}`,
+        name: c.name,
+        color: PALETTE[prev.length % PALETTE.length],
+        areaKm2: c.areaKm2,
+        homeGeometry: c.geometry,
+        dragGeometry,
+        homeCentroid: c.centroid,
+        target: c.centroid,
+        bearing: 0,
+        simplified: dragGeometry !== c.geometry,
+      },
+    ])
+    setQuery('')
+    mapRef.current?.flyTo({ center: c.centroid, zoom: 2.4, duration: 900 })
+  }
+
+  const update = (uid: string, patch: Partial<Placed>) =>
+    setPlaced((prev) => prev.map((p) => (p.uid === uid ? { ...p, ...patch } : p)))
+
+  const matches = useMemo(() => {
+    const q = query.trim().toLowerCase()
+    if (!q) return []
+    return countries.filter((c) => c.name.toLowerCase().includes(q)).slice(0, 8)
+  }, [query, countries])
+
+  return (
+    <div className="app">
+      <div ref={containerRef} className="map" />
+
+      <aside className="panel">
+        <header>
+          <h1>True Size Of</h1>
+          <p>
+            Search a country, then drag it across the map. Its real shape and
+            area never change — only Mercator's lie about them.
+          </p>
+        </header>
+
+        <div className="search">
+          <input
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder={
+              countries.length ? 'Search a country…' : 'Loading countries…'
+            }
+            disabled={!countries.length}
+          />
+          {matches.length > 0 && (
+            <ul className="results">
+              {matches.map((c) => (
+                <li key={c.id}>
+                  <button onClick={() => addCountry(c)}>
+                    <span>{c.name}</span>
+                    <small>{formatArea(c.areaKm2)}</small>
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+
+        {error && <p className="error">{error}</p>}
+
+        <ul className="placed">
+          {placed.map((p) => {
+            const ratio =
+              (mercatorScale(p.target[1]) / mercatorScale(p.homeCentroid[1])) ** 2
+            const moved = Math.abs(ratio - 1) > 0.005
+            return (
+              <li key={p.uid}>
+                <div className="row">
+                  <span className="swatch" style={{ background: p.color }} />
+                  <div className="meta">
+                    <strong>{p.name}</strong>
+                    <small>{formatArea(p.areaKm2)} · true area</small>
+                    {moved && (
+                      <small className={ratio > 1 ? 'up' : 'down'}>
+                        drawn {ratio.toFixed(2)}× its home size
+                      </small>
+                    )}
+                  </div>
+                  <button
+                    onClick={() =>
+                      update(p.uid, { target: p.homeCentroid, bearing: 0 })
+                    }
+                    title="Send home"
+                  >
+                    ⟲
+                  </button>
+                  <button
+                    onClick={() =>
+                      setPlaced((prev) => prev.filter((x) => x.uid !== p.uid))
+                    }
+                    title="Remove"
+                  >
+                    ×
+                  </button>
+                </div>
+                <div className="rotate">
+                  <input
+                    type="range"
+                    min={-180}
+                    max={180}
+                    step={1}
+                    value={p.bearing}
+                    aria-label={`Rotate ${p.name}`}
+                    onPointerDown={() => setActiveUid(p.uid)}
+                    onPointerUp={() => setActiveUid(null)}
+                    onBlur={() => setActiveUid(null)}
+                    onChange={(e) =>
+                      update(p.uid, { bearing: Number(e.target.value) })
+                    }
+                  />
+                  <button
+                    className="deg"
+                    onClick={() => update(p.uid, { bearing: 0 })}
+                    title="Reset rotation"
+                  >
+                    {p.bearing}°
+                  </button>
+                </div>
+              </li>
+            )
+          })}
+        </ul>
+
+        {placed.length === 0 && (
+          <p className="hint">
+            Try Greenland — then drag it down to the equator.
+          </p>
+        )}
+        {placed.some((p) => p.simplified) && (
+          <p className="hint">
+            Outlines over {DRAG_BUDGET.toLocaleString()} points are simplified
+            while you move them, then redrawn at full detail.{' '}
+            {placed
+              .filter((p) => p.simplified)
+              .map((p) => `${p.name} (${countVertices(p.homeGeometry).toLocaleString()})`)
+              .join(', ')}
+          </p>
+        )}
+      </aside>
+    </div>
+  )
+}
