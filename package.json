@@ -13,7 +13,8 @@
     "perf": "node scripts/perf.mjs",
     "data": "node scripts/build-data.mjs",
     "visual": "node scripts/visual.mjs",
-    "perf:bystander": "node scripts/perf-bystander.mjs"
+    "perf:bystander": "node scripts/perf-bystander.mjs",
+    "deploy": "sh scripts/deploy-pages.sh"
   },
   "dependencies": {
     "d3-geo": "^3.1.1",

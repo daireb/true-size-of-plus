@@ -512,3 +512,39 @@ body {
   color: var(--text);
   border-color: var(--accent);
 }
+
+/* --- delete confirmation + undo --- */
+button.danger {
+  background: #e6194b !important;
+  border-color: #e6194b !important;
+  color: #fff !important;
+}
+
+.undo {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin: 0 0 12px;
+  padding: 8px 10px;
+  font-size: 12px;
+  color: var(--text);
+  background: rgba(230, 25, 75, 0.12);
+  border: 1px solid rgba(230, 25, 75, 0.45);
+  border-radius: 8px;
+}
+
+.undo button {
+  padding: 4px 10px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text);
+  background: var(--panel-soft);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.undo button:hover {
+  border-color: var(--accent);
+}

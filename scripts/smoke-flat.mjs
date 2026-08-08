@@ -168,11 +168,15 @@ await page.waitForTimeout(600)
 check('back on the image canvas, subject still there',
   await page.evaluate(() => window.__flat?.count()) === 1)
 
-// --- delete -----------------------------------------------------------------------
+// --- delete: two-click confirm ------------------------------------------------
 await page.click('.canvas-info button[title="Delete map"]')
+await page.waitForTimeout(200)
+check('first delete click only arms', await page.$$eval('.chip', (els) => els.length) === 3)
+await page.click('.canvas-info button.danger')
 await page.waitForTimeout(600)
 check('deleting the canvas falls back to Earth',
   await page.evaluate(() => document.querySelector('.chip.active')?.textContent?.includes('Earth')))
+check('canvas delete offers undo', await page.isVisible('.undo'))
 
 console.log('\nconsole errors:', errors.length ? errors : 'none')
 if (errors.length) failures++

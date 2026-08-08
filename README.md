@@ -194,6 +194,10 @@ directions, so area is preserved exactly. Shapes traced on Earth get their ring
 winding normalised — a polygon traced the wrong way round would otherwise read
 as the whole sphere minus itself.
 
+Deleting a shape or a canvas takes two clicks — the button arms red first —
+and either can be undone for 12 seconds afterwards. The undo restores a
+shape's placements as well as the shape.
+
 ## Save / load
 
 Export writes everything — canvases (images inlined as data URLs), shapes, and

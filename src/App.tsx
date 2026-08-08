@@ -56,6 +56,44 @@ const readImageSize = (blob: Blob) =>
     img.src = url
   })
 
+/**
+ * Two-click delete: first click arms (turns red), second click within 3s
+ * fires. Exists because a one-click delete sat next to the place button and
+ * ate a shape someone had spent an evening tracing.
+ */
+function ConfirmButton({
+  title,
+  armedLabel,
+  onConfirm,
+  children,
+}: {
+  title: string
+  armedLabel?: string
+  onConfirm: () => void
+  children: React.ReactNode
+}) {
+  const [armed, setArmed] = useState(false)
+  useEffect(() => {
+    if (!armed) return
+    const t = setTimeout(() => setArmed(false), 3000)
+    return () => clearTimeout(t)
+  }, [armed])
+  return (
+    <button
+      className={armed ? 'danger' : undefined}
+      title={armed ? 'Click again to confirm' : title}
+      onClick={() => {
+        if (armed) {
+          setArmed(false)
+          onConfirm()
+        } else setArmed(true)
+      }}
+    >
+      {armed && armedLabel ? armedLabel : children}
+    </button>
+  )
+}
+
 export default function App() {
   // --- datasets --------------------------------------------------------------
   const [countries, setCountries] = useState<Place[]>([])
@@ -194,6 +232,42 @@ export default function App() {
   const importRef = useRef<HTMLInputElement>(null)
   const [dataMsg, setDataMsg] = useState<string | null>(null)
 
+  /**
+   * One-slot undo for deletions. Confirmation stops slips; this catches the
+   * confident-but-wrong click. Holds the deleted thing in memory for 12s.
+   */
+  type Trash =
+    | { kind: 'shape'; shape: CustomShape; placements: Record<string, AnyPlaced[]> }
+    | { kind: 'canvas'; def: ImageCanvasDef; session?: StoredSession }
+  const [trash, setTrash] = useState<Trash | null>(null)
+  useEffect(() => {
+    if (!trash) return
+    const t = setTimeout(() => setTrash(null), 12000)
+    return () => clearTimeout(t)
+  }, [trash])
+
+  const undoDelete = async () => {
+    if (!trash) return
+    if (trash.kind === 'shape') {
+      await putShape(trash.shape)
+      setShapes((prev) => [...prev, trash.shape])
+      setLive((prev) => {
+        const next = { ...prev }
+        for (const [k, items] of Object.entries(trash.placements))
+          next[k] = [...(next[k] ?? []), ...items]
+        return next
+      })
+    } else {
+      await putCanvas(trash.def)
+      setCanvases((prev) => [...prev, trash.def])
+      if (trash.session) {
+        storedRef.current[trash.def.id] = trash.session
+        await putSession(trash.def.id, trash.session)
+      }
+    }
+    setTrash(null)
+  }
+
   const doExport = async () => {
     // Flush the active session first so the file matches what's on screen.
     if (live[activeId])
@@ -275,6 +349,8 @@ export default function App() {
   }
 
   const deleteCanvas = async (id: string) => {
+    const def = canvases.find((c) => c.id === id)
+    if (def) setTrash({ kind: 'canvas', def, session: storedRef.current[id] })
     await removeCanvas(id)
     setCanvases((prev) => prev.filter((c) => c.id !== id))
     setLive((prev) => {
@@ -363,6 +439,15 @@ export default function App() {
   }
 
   const deleteShape = async (id: string) => {
+    const shape = shapesById.get(id)
+    if (shape) {
+      const placements: Record<string, AnyPlaced[]> = {}
+      for (const [k, items] of Object.entries(live)) {
+        const mine = items.filter((p) => p.ref.kind === 'shape' && p.ref.id === id)
+        if (mine.length) placements[k] = mine
+      }
+      setTrash({ kind: 'shape', shape, placements })
+    }
     await removeShape(id)
     setShapes((prev) => prev.filter((s) => s.id !== id))
     // Evict live placements of it everywhere; stored ones on other canvases
@@ -526,6 +611,13 @@ export default function App() {
           />
         </div>
 
+        {trash && (
+          <p className="undo">
+            Deleted “{trash.kind === 'shape' ? trash.shape.name : trash.def.name}”.{' '}
+            <button onClick={undoDelete}>Undo</button>
+          </p>
+        )}
+
         {activeCanvas && (
           <section className="canvas-info">
             <div className="campaign-meta">
@@ -543,9 +635,13 @@ export default function App() {
                 <button className="primary" onClick={() => { setMode('calibrate'); setPicks([]) }}>
                   Set scale
                 </button>
-                <button onClick={() => deleteCanvas(activeCanvas.id)} title="Delete map">
+                <ConfirmButton
+                  title="Delete map"
+                  armedLabel="Sure?"
+                  onConfirm={() => deleteCanvas(activeCanvas.id)}
+                >
                   Delete
-                </button>
+                </ConfirmButton>
               </div>
             ) : (
               <div className="calibrate">
@@ -746,9 +842,9 @@ export default function App() {
                   <button onClick={() => placeShape(sh)} title={`Place ${sh.name}`}>
                     ＋
                   </button>
-                  <button onClick={() => deleteShape(sh.id)} title={`Delete ${sh.name}`}>
+                  <ConfirmButton title={`Delete ${sh.name}`} onConfirm={() => deleteShape(sh.id)}>
                     ×
-                  </button>
+                  </ConfirmButton>
                 </li>
               ))}
             </ul>
