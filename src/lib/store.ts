@@ -208,3 +208,62 @@ export const getSessions = async (): Promise<Record<string, StoredSession>> => {
     return {}
   }
 }
+
+// --- snapshot export/import ----------------------------------------------------
+// One self-contained JSON file, images inlined as data URLs. No accounts, no
+// server: the file IS the save. Import merges by id, so re-importing the same
+// snapshot is idempotent rather than duplicating.
+
+export interface Snapshot {
+  app: 'true-size-of-plus'
+  version: 1
+  exportedAt: string
+  canvases: (Omit<ImageCanvasDef, 'blob'> & { image: string })[]
+  shapes: CustomShape[]
+  sessions: Record<string, StoredSession>
+}
+
+const blobToDataUrl = (blob: Blob) =>
+  new Promise<string>((resolve, reject) => {
+    const r = new FileReader()
+    r.onload = () => resolve(String(r.result))
+    r.onerror = () => reject(r.error)
+    r.readAsDataURL(blob)
+  })
+
+export const exportSnapshot = async (): Promise<string> => {
+  const [canvases, shapes, sessions] = await Promise.all([
+    listCanvases(),
+    listShapes(),
+    getSessions(),
+  ])
+  const snap: Snapshot = {
+    app: 'true-size-of-plus',
+    version: 1,
+    exportedAt: new Date().toISOString(),
+    canvases: await Promise.all(
+      canvases.map(async ({ blob, ...def }) => ({
+        ...def,
+        image: await blobToDataUrl(blob),
+      }))
+    ),
+    shapes,
+    sessions,
+  }
+  return JSON.stringify(snap)
+}
+
+export const importSnapshot = async (
+  json: string
+): Promise<{ canvases: number; shapes: number }> => {
+  const snap = JSON.parse(json) as Snapshot
+  if (snap.app !== 'true-size-of-plus' || snap.version !== 1)
+    throw new Error('Not a true-size-of-plus snapshot file')
+  for (const { image, ...def } of snap.canvases ?? []) {
+    const blob = await (await fetch(image)).blob()
+    await putCanvas({ ...def, blob })
+  }
+  for (const s of snap.shapes ?? []) await putShape(s)
+  for (const [id, sess] of Object.entries(snap.sessions ?? {})) await putSession(id, sess)
+  return { canvases: snap.canvases?.length ?? 0, shapes: snap.shapes?.length ?? 0 }
+}

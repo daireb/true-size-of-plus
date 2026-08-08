@@ -17,6 +17,8 @@ import {
   removeShape,
   getSessions,
   putSession,
+  exportSnapshot,
+  importSnapshot,
 } from './lib/store'
 import type {
   CustomShape,
@@ -189,6 +191,37 @@ export default function App() {
   const [distance, setDistance] = useState('')
   const [unit, setUnit] = useState<'mi' | 'km'>('mi')
   const fileRef = useRef<HTMLInputElement>(null)
+  const importRef = useRef<HTMLInputElement>(null)
+  const [dataMsg, setDataMsg] = useState<string | null>(null)
+
+  const doExport = async () => {
+    // Flush the active session first so the file matches what's on screen.
+    if (live[activeId])
+      await putSession(activeId, {
+        placed: toStored(live[activeId]),
+        viewport: viewports[activeId],
+      })
+    const json = await exportSnapshot()
+    const blob = new Blob([json], { type: 'application/json' })
+    const a = document.createElement('a')
+    a.href = URL.createObjectURL(blob)
+    a.download = `true-size-of-${new Date().toISOString().slice(0, 10)}.json`
+    a.click()
+    URL.revokeObjectURL(a.href)
+    setDataMsg('Exported.')
+  }
+
+  const doImport = async (file: File) => {
+    try {
+      const n = await importSnapshot(await file.text())
+      setDataMsg(`Imported ${n.canvases} map(s), ${n.shapes} shape(s). Reloading…`)
+      // Everything rehydrates from storage on boot; a reload is the one code
+      // path that is guaranteed to pick all of it up consistently.
+      setTimeout(() => window.location.reload(), 400)
+    } catch (e) {
+      setDataMsg(String(e instanceof Error ? e.message : e))
+    }
+  }
 
   const placed = live[activeId] ?? []
   const setPlacedFor = useCallback(
@@ -720,6 +753,35 @@ export default function App() {
               ))}
             </ul>
           )}
+        </section>
+
+        <section className="shapes data">
+          <h2>Save / load</h2>
+          <div className="campaign-actions">
+            <button onClick={doExport} title="Export everything to a file">
+              ⬇ Export file
+            </button>
+            <button onClick={() => importRef.current?.click()} title="Import a snapshot file">
+              ⬆ Import file
+            </button>
+            <input
+              ref={importRef}
+              data-testid="import-file"
+              type="file"
+              accept="application/json,.json"
+              hidden
+              onChange={(e) => {
+                const f = e.target.files?.[0]
+                if (f) doImport(f)
+                e.target.value = ''
+              }}
+            />
+          </div>
+          {dataMsg && <p className="hint">{dataMsg}</p>}
+          <p className="hint">
+            Everything — maps, shapes, placements — in one JSON file. No
+            account, nothing uploaded.
+          </p>
         </section>
 
         {simplifiedNames.length > 0 && (

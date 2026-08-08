@@ -5,10 +5,10 @@ Mercator's distortion inflate or shrink it while its real area stays fixed.
 
 ```bash
 npm run dev      # http://localhost:5173
-npm run verify   # headless check of the projection maths (20 assertions)
-npm run smoke    # end-to-end browser test (dev server must be running)
+npm run verify   # headless checks of all the geometry (90+ assertions)
+npm run smoke    # end-to-end browser tests (dev server must be running)
 npm run perf     # drag frame times for the heaviest outlines
-npm run data     # rebuild public/data/countries-10m.json from Natural Earth
+npm run data     # rebuild public/data from Natural Earth
 npm run build
 ```
 
@@ -155,43 +155,64 @@ Each placed country has a rotation slider (-180° to 180°, clockwise). Clicking
 the degree readout resets it to 0. Rotation is part of the stored transform, so
 it composes with dragging without drift.
 
-## Your own campaign map
+## Canvases
 
-Drop an image onto the panel (or click to pick one). It never leaves the
-machine — it is held as an object URL and stored in IndexedDB, not uploaded,
-and not committed to this repo. `localStorage` is unusable here: campaign maps
-are multi-megabyte and base64 would blow past its ~5 MB cap.
+A *canvas* is the reference frame you compare things inside; a *subject* is a
+thing you drag around one. Earth is a canvas (CARTO tiles, Web Mercator,
+rendered by MapLibre — subjects distort as they drag, which is the point).
+Every other canvas is an image you upload plus a declared projection, rendered
+by a purpose-built canvas2d view.
 
-**Calibration.** Click two points on the map — along its scale bar, or corner to
-corner if you know the total width — and say how far apart they are. Whatever
-provisional scale the image was placed at cancels out, because the two points
-are converted back to image pixels first, so only their pixel separation and
-your stated distance matter.
+**Flat canvases.** A hand-drawn fantasy map has one uniform scale everywhere —
+it is a drawing, not a projection of a sphere — so there is no global
+projection to apply. Each subject instead brings its own azimuthal equal-area
+projection centred on its own centroid: it lands at exactly its true area,
+locally faithful in shape, and dragging never changes it. (A 'mercator' option
+for fantasy maps drawn as projections can join later without changing the
+model.)
 
-**Where it goes.** Pinned centred on 0°, 0°. The equator is chosen deliberately:
-Mercator distortion is exactly 1.0 there and grows as sec(latitude), so it is
-the one place a fantasy map can sit and have real countries dragged alongside it
-at an honest scale. A 2,000-mile-wide map spans ±14.47° of longitude and its top
-edge is drawn only 1.25% larger than its centre.
+**Scale calibration.** Click two points on your map — along its scale bar, or
+corner to corner — and say how far apart they are. World coordinates on an
+image canvas are image pixels, so recalibrating re-sizes subjects but never
+slides them off the coastline they were placed on.
 
-The latitude extent is derived in Mercator space rather than from a plain
-degrees-per-km ratio, because MapLibre draws an image source as a quad
-interpolated in Mercator coordinates — matching the aspect ratio *there* is what
-keeps the picture itself unstretched.
+**Sessions.** Every canvas keeps what you were doing on it — placed subjects,
+camera — in IndexedDB, restored when you come back. Only references and
+transforms are stored, never geometry.
 
-`npm run verify` checks the maths (corners map back to exact image pixels, a
-7.3x-wrong provisional scale still recovers the right answer) and
-`scripts/smoke-campaign.mjs` drives the whole flow in a real browser against a
-generated image, including measuring the drawn result on the globe rather than
-trusting the UI readout.
+Images stay on your machine: object URL for display, IndexedDB for storage,
+nothing uploaded anywhere. Keep exports under ~8,192 px on the long edge —
+decoded images cost 4 bytes/pixel regardless of PNG compression.
 
-## Not yet built
+## Traced shapes
 
-Loading a custom (e.g. D&D campaign) map as the basemap and placing real
-countries on it. The plan: pin the map image at the equator as a MapLibre
-`image` source, with its corner coordinates set so its width in km matches the
-map's stated scale. Distortion is negligible there, so comparisons stay honest
-and the existing drag code works unchanged.
+"Trace a shape" outlines a polygon on whatever canvas is active. Named shapes
+join a library that works everywhere: trace your kingdom on your campaign map
+and drop it next to France on Earth, or trace a patch of Earth and drop it onto
+your map. Cross-canvas placement goes through the equal-area projection in both
+directions, so area is preserved exactly. Shapes traced on Earth get their ring
+winding normalised — a polygon traced the wrong way round would otherwise read
+as the whole sphere minus itself.
+
+## Save / load
+
+Export writes everything — canvases (images inlined as data URLs), shapes, and
+every canvas's session — to a single JSON file. Import reads one back and
+merges by id, so re-importing a snapshot is idempotent. No accounts, no server;
+the file is the save. Verified by `scripts/smoke-data.mjs`, which exports from
+one browser profile and imports into a pristine one.
+
+## Fictional maps (Tamriel, Middle-earth, …)
+
+No fictional maps ship with this repo: published fantasy maps are copyrighted
+artwork, and even a traced outline of a distinctive fictional continent is a
+derivative of it. Import your own copy instead — the calibration tool is built
+for exactly this. Two useful reference points for setting scale, both
+approximate: fan cartography commonly puts Tamriel's mainland in the region of
+3,000–4,000 km across, and George R. R. Martin has described Westeros as
+roughly the size of South America, with the Wall about 300 miles long — a
+handy in-map scale bar. Calibrate against whichever figure you trust and the
+tool takes care of the rest.
 
 ## Credit
 
