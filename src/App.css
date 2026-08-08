@@ -465,3 +465,50 @@ body {
   border: 1px solid var(--line);
   border-radius: 9px;
 }
+
+/* --- shapes --- */
+.shapes {
+  margin-top: 16px;
+  padding-top: 12px;
+  border-top: 1px solid var(--line);
+}
+
+.shapes h2 {
+  margin: 0 0 9px;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.shapelist {
+  margin: 10px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.shapelist li {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 7px 0;
+  border-top: 1px solid var(--line);
+}
+
+.shapelist button {
+  flex: none;
+  width: 24px;
+  height: 24px;
+  font-size: 14px;
+  color: var(--muted);
+  background: none;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.shapelist button:hover {
+  color: var(--text);
+  border-color: var(--accent);
+}

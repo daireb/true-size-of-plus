@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
 import { mercatorScale } from './lib/geo'
 import type { LonLat } from './lib/geo'
-import { geoToPlane, describeKm, KM_PER_MILE } from './lib/flat'
+import { geoToPlane, describeKm, KM_PER_MILE, shapeFromFlatTrace, shapeFromGeoTrace } from './lib/flat'
 import type { PlanePoint } from './lib/flat'
 import { simplifyGeometry, countVertices } from './lib/geo'
 import { loadCountries, loadRegions, metricsOf, formatArea, searchPlaces } from './lib/places'
@@ -13,6 +13,8 @@ import {
   putCanvas,
   removeCanvas,
   listShapes,
+  putShape,
+  removeShape,
   getSessions,
   putSession,
 } from './lib/store'
@@ -25,7 +27,7 @@ import type {
   ImageCanvasDef,
   StoredSession,
 } from './lib/store'
-import { DRAG_BUDGET, PALETTE, earthFromStored, flatFromStored, toStored } from './lib/session'
+import { DRAG_BUDGET, PALETTE, earthFromStored, flatFromStored, toStored, shapeHomeCentroid } from './lib/session'
 import EarthView from './EarthView'
 import type { EarthViewHandle } from './EarthView'
 import FlatView from './FlatView'
@@ -181,8 +183,9 @@ export default function App() {
   const flatRef = useRef<FlatViewHandle>(null)
   const [query, setQuery] = useState('')
   const [activeUid, setActiveUid] = useState<string | null>(null)
-  const [calibrating, setCalibrating] = useState(false)
+  const [mode, setMode] = useState<'none' | 'calibrate' | 'trace'>('none')
   const [picks, setPicks] = useState<PlanePoint[]>([])
+  const [shapeName, setShapeName] = useState('')
   const [distance, setDistance] = useState('')
   const [unit, setUnit] = useState<'mi' | 'km'>('mi')
   const fileRef = useRef<HTMLInputElement>(null)
@@ -203,7 +206,7 @@ export default function App() {
 
   const switchCanvas = (id: string) => {
     if (id === activeId) return
-    setCalibrating(false)
+    setMode('none')
     setPicks([])
     setActiveUid(null)
     setActiveId(id)
@@ -232,7 +235,7 @@ export default function App() {
       setCanvases((prev) => [...prev, def])
       switchCanvas(def.id)
       // A fresh map has a made-up scale — walk straight into calibration.
-      setCalibrating(true)
+      setMode('calibrate')
     } catch (e) {
       setError(String(e instanceof Error ? e.message : e))
     }
@@ -262,10 +265,83 @@ export default function App() {
     const def = { ...activeCanvas, kmPerPixel: km / px }
     await putCanvas(def)
     setCanvases((prev) => prev.map((c) => (c.id === def.id ? def : c)))
-    setCalibrating(false)
+    setMode('none')
     setPicks([])
     setDistance('')
     setError(null)
+  }
+
+  // --- shapes ------------------------------------------------------------------
+  const saveShape = async () => {
+    const name = shapeName.trim()
+    if (picks.length < 3 || !name) return
+    let shape: CustomShape
+    if (onEarth) {
+      const t = shapeFromGeoTrace(picks as LonLat[])
+      shape = {
+        id: freshId('shape'),
+        name,
+        def: { kind: 'geo', geometry: t.geometry },
+        areaKm2: t.areaKm2,
+        tracedOn: 'Earth',
+      }
+    } else {
+      const t = shapeFromFlatTrace(picks, activeCanvas!.kmPerPixel)
+      shape = {
+        id: freshId('shape'),
+        name,
+        def: { kind: 'flat', rings: t.rings },
+        areaKm2: t.areaKm2,
+        tracedOn: activeCanvas!.name,
+      }
+    }
+    await putShape(shape)
+    setShapes((prev) => [...prev, shape])
+    setMode('none')
+    setPicks([])
+    setShapeName('')
+  }
+
+  const placeShape = (s: CustomShape) => {
+    const uid = freshId('p')
+    const target: [number, number] = onEarth
+      ? s.def.kind === 'geo'
+        ? shapeHomeCentroid(s)!
+        : ((viewports[EARTH_ID] as EarthViewport | undefined)?.center ?? [0, 20])
+      : flatRef.current?.viewCenter() ?? [
+          (activeCanvas?.width ?? 0) / 2,
+          (activeCanvas?.height ?? 0) / 2,
+        ]
+    const sp = {
+      uid,
+      name: s.name,
+      color: PALETTE[placed.length % PALETTE.length],
+      areaKm2: s.areaKm2,
+      bearing: 0,
+      target,
+      ref: { kind: 'shape' as const, id: s.id },
+    }
+    const item = onEarth
+      ? earthFromStored(sp, placesById, shapesById)
+      : flatFromStored(sp, placesById, shapesById)
+    if (!item) return
+    setPlacedFor(activeId)((prev) => [...prev, item])
+    if (onEarth) earthRef.current?.flyTo(target as LonLat, 3)
+  }
+
+  const deleteShape = async (id: string) => {
+    await removeShape(id)
+    setShapes((prev) => prev.filter((s) => s.id !== id))
+    // Evict live placements of it everywhere; stored ones on other canvases
+    // simply fail to rehydrate later, which is the same outcome.
+    setLive((prev) =>
+      Object.fromEntries(
+        Object.entries(prev).map(([k, items]) => [
+          k,
+          items.filter((p) => !(p.ref.kind === 'shape' && p.ref.id === id)),
+        ])
+      )
+    )
   }
 
   // --- subjects --------------------------------------------------------------
@@ -342,9 +418,9 @@ export default function App() {
           setPlaced={setPlacedFor(EARTH_ID) as React.Dispatch<React.SetStateAction<EarthPlaced[]>>}
           activeUid={onEarth ? activeUid : null}
           setActiveUid={setActiveUid}
-          picking={false}
-          picks={[]}
-          onPick={() => {}}
+          picking={onEarth && mode === 'trace'}
+          picks={onEarth && mode === 'trace' ? (picks as LonLat[]) : []}
+          onPick={(p) => setPicks((prev) => [...prev, p])}
           onViewportChange={(v) =>
             setViewports((prev) => ({ ...prev, [EARTH_ID]: v }))
           }
@@ -359,9 +435,13 @@ export default function App() {
             setPlaced={setPlacedFor(activeId) as React.Dispatch<React.SetStateAction<FlatPlaced[]>>}
             activeUid={activeUid}
             setActiveUid={setActiveUid}
-            picking={calibrating && picks.length < 2}
+            picking={mode === 'calibrate' ? picks.length < 2 : mode === 'trace'}
             picks={picks}
-            onPick={(p) => setPicks((prev) => (prev.length < 2 ? [...prev, p] : prev))}
+            onPick={(p) =>
+              setPicks((prev) =>
+                mode === 'calibrate' && prev.length >= 2 ? prev : [...prev, p]
+              )
+            }
             initialViewport={viewports[activeId] as FlatViewport | undefined}
             onViewportChange={(v) =>
               setViewports((prev) => ({ ...prev, [activeId]: v }))
@@ -425,9 +505,9 @@ export default function App() {
                 {describeKm(activeCanvas.height * activeCanvas.kmPerPixel)} tall
               </small>
             </div>
-            {!calibrating ? (
+            {mode !== 'calibrate' ? (
               <div className="campaign-actions">
-                <button className="primary" onClick={() => { setCalibrating(true); setPicks([]) }}>
+                <button className="primary" onClick={() => { setMode('calibrate'); setPicks([]) }}>
                   Set scale
                 </button>
                 <button onClick={() => deleteCanvas(activeCanvas.id)} title="Delete map">
@@ -469,7 +549,7 @@ export default function App() {
                       Apply
                     </button>
                   )}
-                  <button onClick={() => { setCalibrating(false); setPicks([]) }}>Cancel</button>
+                  <button onClick={() => { setMode('none'); setPicks([]) }}>Cancel</button>
                 </div>
               </div>
             )}
@@ -578,6 +658,69 @@ export default function App() {
               : 'Search for a country or region to drop it onto your map at true size.'}
           </p>
         )}
+
+        <section className="shapes">
+          <h2>Shapes</h2>
+          {mode !== 'trace' ? (
+            <div className="campaign-actions">
+              <button onClick={() => { setMode('trace'); setPicks([]); setShapeName('') }}>
+                ✏️ Trace a shape on this map
+              </button>
+            </div>
+          ) : (
+            <div className="calibrate">
+              <p>
+                Click points on the map to outline your shape.{' '}
+                {picks.length < 3
+                  ? `${picks.length} of at least 3.`
+                  : `${picks.length} points — keep clicking, or save.`}
+              </p>
+              {picks.length >= 3 && (
+                <div className="distance">
+                  <input
+                    autoFocus
+                    value={shapeName}
+                    placeholder="Name this shape…"
+                    onChange={(e) => setShapeName(e.target.value)}
+                    onKeyDown={(e) => e.key === 'Enter' && saveShape()}
+                  />
+                </div>
+              )}
+              <div className="campaign-actions">
+                {picks.length >= 3 && (
+                  <button className="primary" onClick={saveShape} disabled={!shapeName.trim()}>
+                    Save shape
+                  </button>
+                )}
+                {picks.length > 0 && (
+                  <button onClick={() => setPicks((prev) => prev.slice(0, -1))}>Undo point</button>
+                )}
+                <button onClick={() => { setMode('none'); setPicks([]) }}>Cancel</button>
+              </div>
+            </div>
+          )}
+          {shapes.length > 0 && (
+            <ul className="shapelist">
+              {shapes.map((sh) => (
+                <li key={sh.id}>
+                  <div className="meta">
+                    <strong>{sh.name}</strong>
+                    <small>
+                      {formatArea(sh.areaKm2)}
+                      {sh.tracedOn ? ` · traced on ${sh.tracedOn}` : ''}
+                    </small>
+                  </div>
+                  <button onClick={() => placeShape(sh)} title={`Place ${sh.name}`}>
+                    ＋
+                  </button>
+                  <button onClick={() => deleteShape(sh.id)} title={`Delete ${sh.name}`}>
+                    ×
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+        </section>
 
         {simplifiedNames.length > 0 && (
           <p className="hint">

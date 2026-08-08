@@ -20,7 +20,8 @@ export const PALETTE = [
   '#008080', '#f032e6', '#9a6324', '#800000', '#000075',
 ]
 
-const geoCentroidOf = (s: CustomShape) =>
+/** Home centroid of a geo shape; flat shapes have no home. */
+export const shapeHomeCentroid = (s: CustomShape) =>
   s.def.kind === 'geo' ? metricsOf({ geometry: s.def.geometry } as Place).centroid : null
 
 /** Rebuild a live Earth subject from its stored reference. */
@@ -58,7 +59,7 @@ export const earthFromStored = (
   const s = shapes.get(sp.ref.id)
   if (!s) return null
   if (s.def.kind === 'flat') return { ...base, src: { kind: 'flat', rings: s.def.rings } }
-  const centroid = geoCentroidOf(s)!
+  const centroid = shapeHomeCentroid(s)!
   return {
     ...base,
     src: {
@@ -96,7 +97,7 @@ export const flatFromStored = (
   if (!s) return null
   return {
     ...base,
-    rings: s.def.kind === 'flat' ? s.def.rings : geoToPlane(s.def.geometry, geoCentroidOf(s)!),
+    rings: s.def.kind === 'flat' ? s.def.rings : geoToPlane(s.def.geometry, shapeHomeCentroid(s)!),
   }
 }
 
