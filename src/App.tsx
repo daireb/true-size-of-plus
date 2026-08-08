@@ -1117,7 +1117,7 @@ export default function App() {
               onClick={startTrace}
               title="Trace a new shape on this map"
             >
-              ✏️＋
+              ＋
             </button>
           ) : (
             <span className="badge">tracing…</span>
