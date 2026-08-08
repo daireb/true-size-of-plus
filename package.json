@@ -20,7 +20,7 @@
     "lint": "oxlint",
     "preview": "vite preview",
     "verify": "node --experimental-strip-types scripts/verify-geo.ts && node --experimental-strip-types scripts/verify-search.ts && node --experimental-strip-types scripts/verify-flat.ts",
-    "smoke": "node scripts/smoke.mjs && node scripts/smoke-flat.mjs && node scripts/smoke-trace.mjs && node scripts/smoke-data.mjs",
+    "smoke": "node scripts/smoke.mjs && node scripts/smoke-flat.mjs && node scripts/smoke-trace.mjs && node scripts/smoke-data.mjs && node scripts/smoke-mobile.mjs",
     "perf": "node scripts/perf.mjs",
     "data": "node scripts/build-data.mjs",
     "visual": "node scripts/visual.mjs",

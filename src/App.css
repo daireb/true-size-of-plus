@@ -21,6 +21,7 @@ body,
 body {
   font-family: system-ui, -apple-system, 'Segoe UI', sans-serif;
   color: var(--text);
+  overscroll-behavior: none;
 }
 
 .app {
@@ -862,4 +863,56 @@ p.extent {
 .modal.help b {
   color: var(--text);
   font-weight: 600;
+}
+
+/* ── mobile: the panel becomes a collapsible bottom sheet ───────── */
+.paneltoggle {
+  display: none;
+}
+
+@media (max-width: 720px) {
+  .panel {
+    top: auto;
+    left: 8px;
+    right: 8px;
+    bottom: 8px;
+    width: auto;
+    max-height: 55vh;
+    max-height: 55dvh;
+    padding: 12px 14px;
+  }
+
+  .panel h1 {
+    font-size: 17px;
+  }
+
+  /* The whole header is the expand/collapse tap target. */
+  .panel header {
+    cursor: pointer;
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  .paneltoggle {
+    display: block;
+  }
+
+  .panel.closed > :not(header) {
+    display: none;
+  }
+
+  .panel.closed header {
+    margin-bottom: 0;
+  }
+
+  /* Sits above the collapsed sheet instead of under it. */
+  .tracebar {
+    bottom: 72px;
+    max-width: calc(100vw - 16px);
+  }
+
+  /* Keep the CARTO attribution visible above the sheet. */
+  .maplibregl-ctrl-bottom-right,
+  .maplibregl-ctrl-bottom-left {
+    bottom: 64px;
+  }
 }

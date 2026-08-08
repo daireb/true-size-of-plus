@@ -39,6 +39,9 @@ import './App.css'
 const EARTH_ID = 'earth'
 const ACTIVE_KEY = 'tsop-active-canvas'
 
+/** Matches the bottom-sheet breakpoint in App.css. */
+const isMobile = () => window.matchMedia('(max-width: 720px)').matches
+
 type AnyPlaced = EarthPlaced | FlatPlaced
 
 const readImageSize = (blob: Blob) =>
@@ -216,6 +219,22 @@ export default function App() {
   const [showSettings, setShowSettings] = useState(false)
   const [nameDraft, setNameDraft] = useState('')
   const [showHelp, setShowHelp] = useState(false)
+
+  /**
+   * On phones the panel is a bottom sheet, collapsed to its header by default
+   * so the map is the hero. Desktop ignores this entirely — the `.closed`
+   * class only does anything inside the mobile media query.
+   */
+  const [panelOpen, setPanelOpen] = useState(() => !isMobile())
+  // Tracing is map work; get the sheet out of the way.
+  useEffect(() => {
+    if (mode === 'trace' && isMobile()) setPanelOpen(false)
+  }, [mode])
+  // The second calibration pick needs the distance input, which lives in the
+  // panel — reopen it even if the user collapsed the sheet to tap the points.
+  useEffect(() => {
+    if (mode === 'calibrate' && picks.length === 2) setPanelOpen(true)
+  }, [mode, picks.length])
 
   /**
    * One-slot undo for deletions. Confirmation stops slips; this catches the
@@ -723,6 +742,7 @@ export default function App() {
     if (!item) return
     setPlacedFor(activeId)((prev) => [...prev, item])
     if (onEarth) earthRef.current?.flyTo(target as LonLat, 3)
+    if (isMobile()) setPanelOpen(false) // show what just landed
   }
 
   const deleteShape = async (id: string) => {
@@ -786,6 +806,7 @@ export default function App() {
       setPlacedFor(activeId)((prev) => [...prev, item])
     }
     setQuery('')
+    if (isMobile()) setPanelOpen(false) // show what just landed
   }
 
   const rotateTo = useCallback((uid: string, bearing: number) => {
@@ -957,11 +978,29 @@ export default function App() {
         </div>
       )}
 
-      <aside className="panel">
-        <header>
+      <aside className={panelOpen ? 'panel' : 'panel closed'}>
+        <header onClick={() => isMobile() && setPanelOpen((o) => !o)}>
           <h1>True Size Of</h1>
-          <button className="iconbtn" onClick={() => setShowHelp(true)} title="How this works">
+          <button
+            className="iconbtn"
+            onClick={(e) => {
+              e.stopPropagation()
+              setShowHelp(true)
+            }}
+            title="How this works"
+          >
             ?
+          </button>
+          <button
+            className="iconbtn paneltoggle"
+            aria-expanded={panelOpen}
+            title={panelOpen ? 'Collapse panel' : 'Expand panel'}
+            onClick={(e) => {
+              e.stopPropagation()
+              setPanelOpen((o) => !o)
+            }}
+          >
+            {panelOpen ? '▾' : '▴'}
           </button>
         </header>
 

@@ -128,6 +128,7 @@ const FlatView = forwardRef<FlatViewHandle, Props>(function FlatView(
         moved: boolean
       }
     | { kind: 'rotate'; uid: string }
+    | { kind: 'pinch'; p1: number; p2: number; lastMid: PlanePoint; lastDist: number }
     | null
   >(null)
 
@@ -399,6 +400,18 @@ const FlatView = forwardRef<FlatViewHandle, Props>(function FlatView(
       return [e.clientX - r.left, e.clientY - r.top] as PlanePoint
     }
 
+    /** Live screen position of every pressed pointer, for pinch-zoom. */
+    const pointers = new Map<number, PlanePoint>()
+
+    const capture = (id: number) => {
+      // Synthetic events (tests) carry pointerIds the browser doesn't know.
+      try {
+        cv.setPointerCapture(id)
+      } catch {
+        /* ignore */
+      }
+    }
+
     /** Screen position of the selected subject's rotate knob, if shown. */
     const knobScreen = (): PlanePoint | null => {
       const { placed: items, selectedUid: sel, picking: pk } = propsRef.current
@@ -446,6 +459,24 @@ const FlatView = forwardRef<FlatViewHandle, Props>(function FlatView(
       // never fall through to add-a-point or start a pan.
       if (e.button !== 0) return
       const [sx, sy] = local(e)
+      pointers.set(e.pointerId, [sx, sy])
+      capture(e.pointerId)
+      // A second finger turns whatever gesture was underway into a pinch.
+      if (pointers.size === 2) {
+        const drag = dragRef.current
+        if (drag?.kind === 'item' || drag?.kind === 'rotate') setActiveUid(null)
+        const [i, j] = [...pointers.keys()]
+        const [a, b] = [...pointers.values()]
+        dragRef.current = {
+          kind: 'pinch',
+          p1: i,
+          p2: j,
+          lastMid: [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2],
+          lastDist: Math.hypot(a[0] - b[0], a[1] - b[1]),
+        }
+        return
+      }
+      if (pointers.size > 2) return
       const [wx, wy] = worldFromScreen(sx, sy)
       if (propsRef.current.picking) {
         // Grab a vertex, split an edge, or — failing both — wait to see
@@ -456,7 +487,6 @@ const FlatView = forwardRef<FlatViewHandle, Props>(function FlatView(
             onTraceEditStartRef.current?.()
             if (hit.kind === 'edge') onTraceInsertRef.current?.(hit.ring, hit.index, [wx, wy])
             dragRef.current = { kind: 'trace-vertex', ring: hit.ring, index: hit.index }
-            cv.setPointerCapture(e.pointerId)
             return
           }
         }
@@ -473,7 +503,6 @@ const FlatView = forwardRef<FlatViewHandle, Props>(function FlatView(
             startY: e.clientY,
             moved: false,
           }
-          cv.setPointerCapture(e.pointerId)
           return
         }
         dragRef.current = {
@@ -486,7 +515,6 @@ const FlatView = forwardRef<FlatViewHandle, Props>(function FlatView(
           lastY: e.clientY,
           moved: false,
         }
-        cv.setPointerCapture(e.pointerId)
         return
       }
       // The rotate knob wins over everything under it.
@@ -495,7 +523,6 @@ const FlatView = forwardRef<FlatViewHandle, Props>(function FlatView(
         dragRef.current = { kind: 'rotate', uid: propsRef.current.selectedUid! }
         setActiveUid(propsRef.current.selectedUid)
         cv.style.cursor = 'grabbing'
-        cv.setPointerCapture(e.pointerId)
         return
       }
       const uid = hitTest(wx, wy)
@@ -522,11 +549,31 @@ const FlatView = forwardRef<FlatViewHandle, Props>(function FlatView(
           moved: false,
         }
       }
-      cv.setPointerCapture(e.pointerId)
     }
 
     const onMove = (e: PointerEvent) => {
+      if (pointers.has(e.pointerId)) pointers.set(e.pointerId, local(e))
       const drag = dragRef.current
+      if (drag?.kind === 'pinch') {
+        const a = pointers.get(drag.p1)
+        const b = pointers.get(drag.p2)
+        if (!a || !b) return
+        const mid: PlanePoint = [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2]
+        const dist = Math.hypot(a[0] - b[0], a[1] - b[1])
+        if (drag.lastDist > 1 && dist > 1) {
+          const vp = vpRef.current ?? fitViewport()
+          const zoom = Math.min(Math.max(vp.zoom * (dist / drag.lastDist), 0.01), 64)
+          // The world point that was under the finger midpoint stays under
+          // it — that one constraint does both the zoom and the pan.
+          const wx = (drag.lastMid[0] - vp.tx) / vp.zoom
+          const wy = (drag.lastMid[1] - vp.ty) / vp.zoom
+          vpRef.current = { zoom, tx: mid[0] - wx * zoom, ty: mid[1] - wy * zoom }
+          scheduleDraw()
+        }
+        drag.lastMid = mid
+        drag.lastDist = dist
+        return
+      }
       if (!drag) {
         const [sx, sy] = local(e)
         const [wx, wy] = worldFromScreen(sx, sy)
@@ -624,7 +671,18 @@ const FlatView = forwardRef<FlatViewHandle, Props>(function FlatView(
     }
 
     const onUp = (e: PointerEvent) => {
+      pointers.delete(e.pointerId)
       const drag = dragRef.current
+      if (drag?.kind === 'pinch') {
+        // Either finger lifting ends the pinch; the survivor does nothing
+        // until it is pressed again.
+        if (e.pointerId === drag.p1 || e.pointerId === drag.p2) {
+          dragRef.current = null
+          if (vpRef.current) onViewportRef.current?.(vpRef.current)
+        }
+        if (cv.hasPointerCapture(e.pointerId)) cv.releasePointerCapture(e.pointerId)
+        return
+      }
       dragRef.current = null
       if (drag?.kind === 'rotate') setActiveUid(null)
       if (drag?.kind === 'item') {

@@ -261,6 +261,7 @@ const EarthView = forwardRef<EarthViewHandle, Props>(function EarthView(
     })
     map.addControl(new maplibregl.NavigationControl({ showCompass: false }), 'top-right')
     map.touchZoomRotate.disableRotation()
+    map.touchPitch.disable()
 
     // Styles are injected by JS, so the container can still be 0x0 when the
     // map is constructed — it would then latch onto a 400x300 canvas.
@@ -647,6 +648,17 @@ const EarthView = forwardRef<EarthViewHandle, Props>(function EarthView(
 
     const onDown = (e: maplibregl.MapMouseEvent | maplibregl.MapTouchEvent) => {
       if (picking) return
+      // A second finger means pinch: drop any subject drag and get out of the
+      // way so MapLibre's own touchZoomRotate handles it.
+      if ('touches' in e.originalEvent && e.originalEvent.touches.length > 1) {
+        if (dragRef.current) {
+          dragRef.current = null
+          setActiveUid(null)
+          map.dragPan.enable()
+          map.getCanvas().style.cursor = ''
+        }
+        return
+      }
       // The rotate knob wins over everything under it.
       const ks = knobScreen()
       if (ks && Math.hypot(e.point.x - ks.x, e.point.y - ks.y) <= 12) {
@@ -678,6 +690,7 @@ const EarthView = forwardRef<EarthViewHandle, Props>(function EarthView(
     }
 
     const onMove = (e: maplibregl.MapMouseEvent | maplibregl.MapTouchEvent) => {
+      if ('touches' in e.originalEvent && e.originalEvent.touches.length > 1) return
       const drag = dragRef.current
       if (!drag) {
         if (picking) return
