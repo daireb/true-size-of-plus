@@ -208,6 +208,16 @@ again and it lands there, and the ⟲ button sends it back after wandering. The
 link is deliberately loose — delete that map and the shape survives, it just
 falls back to spawning at the view centre.
 
+The ✎ on a shape row copies it back into the trace editor — on its home canvas
+the original vertices return exactly; elsewhere the outline converts into the
+canvas's space at the view centre. Saving under the same name **updates the
+shape in place**: because references point at the shape's id rather than its
+geometry, every placement on every canvas follows automatically, and the
+replaced version sits in the 12-second undo. Saving under a new name forks it
+and leaves the original untouched, so a work-in-progress trace is just a shape
+you keep re-editing. The Save button reads "Update" whenever the name matches
+an existing shape.
+
 Named shapes
 join a library that works everywhere: trace your kingdom on your campaign map
 and drop it next to France on Earth, or trace a patch of Earth and drop it onto

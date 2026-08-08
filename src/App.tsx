@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
 import { mercatorScale } from './lib/geo'
 import type { LonLat } from './lib/geo'
-import { geoToPlane, describeKm, KM_PER_MILE, shapeFromFlatTrace, shapeFromGeoTrace, planeCentroid } from './lib/flat'
+import { geoToPlane, planeToGeo, describeKm, KM_PER_MILE, shapeFromFlatTrace, shapeFromGeoTrace, planeCentroid } from './lib/flat'
 import type { PlanePoint } from './lib/flat'
 import { simplifyGeometry } from './lib/geo'
 import { loadCountries, loadRegions, metricsOf, formatArea, searchPlaces } from './lib/places'
@@ -238,6 +238,7 @@ export default function App() {
 
   type Trash =
     | { kind: 'shape'; shape: CustomShape; placements: Record<string, AnyPlaced[]> }
+    | { kind: 'shape-replaced'; before: CustomShape }
     | { kind: 'canvas'; def: ImageCanvasDef; session?: StoredSession }
   const [trash, setTrash] = useState<Trash | null>(null)
   useEffect(() => {
@@ -246,8 +247,48 @@ export default function App() {
     return () => clearTimeout(t)
   }, [trash])
 
+  /** Rebuild live placements of a shape after its geometry changed. */
+  const refreshShapePlacements = useCallback(
+    (shape: CustomShape) => {
+      const m = new Map([[shape.id, shape]])
+      setLive((prev) =>
+        Object.fromEntries(
+          Object.entries(prev).map(([canvasId, items]) => [
+            canvasId,
+            items.map((p) => {
+              if (!(p.ref.kind === 'shape' && p.ref.id === shape.id)) return p
+              const sp = {
+                uid: p.uid,
+                name: shape.name,
+                parent: p.parent,
+                color: p.color,
+                areaKm2: shape.areaKm2,
+                bearing: p.bearing,
+                target: [p.target[0], p.target[1]] as [number, number],
+                ref: p.ref,
+              }
+              return (
+                (canvasId === EARTH_ID
+                  ? earthFromStored(sp, placesById, m)
+                  : flatFromStored(sp, placesById, m)) ?? p
+              )
+            }),
+          ])
+        )
+      )
+    },
+    [placesById]
+  )
+
   const undoDelete = async () => {
     if (!trash) return
+    if (trash.kind === 'shape-replaced') {
+      await putShape(trash.before)
+      setShapes((prev) => prev.map((sh) => (sh.id === trash.before.id ? trash.before : sh)))
+      refreshShapePlacements(trash.before)
+      setTrash(null)
+      return
+    }
     if (trash.kind === 'shape') {
       await putShape(trash.shape)
       setShapes((prev) => [...prev, trash.shape])
@@ -525,6 +566,59 @@ export default function App() {
 
   const traceReady = traceRings.length > 0 || picks.length >= 3
 
+  /**
+   * Copy a saved shape into the trace editor on the active canvas. On its home
+   * canvas the original vertices come back exactly; elsewhere the outline is
+   * converted into this canvas's space and dropped at the view centre. Saving
+   * under the same name updates the shape in place; a new name forks it.
+   */
+  const editShape = (sh: CustomShape) => {
+    // Stored rings are closed (first == last); the editor works on open ones.
+    const open = (r: [number, number][]) =>
+      r.length > 1 &&
+      r[0][0] === r[r.length - 1][0] &&
+      r[0][1] === r[r.length - 1][1]
+        ? r.slice(0, -1)
+        : r
+
+    let rings: PlanePoint[][]
+    if (onEarth) {
+      const geometry =
+        sh.def.kind === 'geo'
+          ? sh.def.geometry
+          : planeToGeo(
+              sh.def.rings,
+              (viewports[EARTH_ID] as EarthViewport | undefined)?.center ?? [0, 20]
+            )
+      const polys =
+        geometry.type === 'Polygon'
+          ? [geometry.coordinates]
+          : geometry.type === 'MultiPolygon'
+            ? geometry.coordinates
+            : []
+      rings = polys.map((poly) => open(poly[0] as [number, number][]))
+    } else {
+      const kpp = activeCanvas!.kmPerPixel
+      const atHome = sh.def.kind === 'flat' && sh.home?.canvasId === activeId
+      const kmRings =
+        sh.def.kind === 'flat'
+          ? sh.def.rings
+          : geoToPlane(sh.def.geometry, shapeHomeCentroid(sh)!)
+      const [ox, oy] = atHome
+        ? sh.home!.target
+        : flatRef.current?.viewCenter() ?? [activeCanvas!.width / 2, activeCanvas!.height / 2]
+      rings = kmRings.map((poly) =>
+        open(poly[0].map(([x, y]) => [x / kpp + ox, y / kpp + oy] as PlanePoint))
+      )
+    }
+    setMode('trace')
+    setPicks([])
+    setTraceRings(rings)
+    setTraceHistory([])
+    gestureRef.current = null
+    setShapeName(sh.name)
+  }
+
   const saveShape = async () => {
     const name = shapeName.trim()
     // Stray 1-2 point current rings are ignored rather than blocking the save.
@@ -553,6 +647,24 @@ export default function App() {
         tracedOn: activeCanvas!.name,
         home: { canvasId: activeId, target: c },
       }
+    }
+    // Saving under an existing shape's name updates that shape in place.
+    // Keeping its id is what makes every reference follow automatically —
+    // placements and homes point at the id, never at the geometry.
+    const existing = shapes.find((sh) => sh.name === name)
+    if (existing) {
+      const next = { ...shape, id: existing.id }
+      setTrash({ kind: 'shape-replaced', before: existing })
+      await putShape(next)
+      setShapes((prev) => prev.map((sh) => (sh.id === existing.id ? next : sh)))
+      refreshShapePlacements(next)
+      cancelTrace()
+      // Spawn only if it isn't already sitting on this canvas.
+      const alreadyHere = (live[activeId] ?? []).some(
+        (p) => p.ref.kind === 'shape' && p.ref.id === existing.id
+      )
+      if (!alreadyHere) placeShape(next)
+      return
     }
     await putShape(shape)
     setShapes((prev) => [...prev, shape])
@@ -799,7 +911,7 @@ export default function App() {
             disabled={!traceReady || !shapeName.trim()}
             onClick={saveShape}
           >
-            Save
+            {shapes.some((sh) => sh.name === shapeName.trim()) ? 'Update' : 'Save'}
           </button>
           <button
             disabled={picks.length < 3}
@@ -891,7 +1003,13 @@ export default function App() {
 
         {trash && (
           <p className="undo">
-            Deleted “{trash.kind === 'shape' ? trash.shape.name : trash.def.name}”.{' '}
+            {trash.kind === 'shape-replaced' ? 'Replaced' : 'Deleted'} “
+            {trash.kind === 'shape'
+              ? trash.shape.name
+              : trash.kind === 'shape-replaced'
+                ? trash.before.name
+                : trash.def.name}
+            ”.{' '}
             <button onClick={undoDelete}>Undo</button>
           </p>
         )}
@@ -1151,6 +1269,13 @@ export default function App() {
                     </small>
                   </span>
                   <span className="plus">＋</span>
+                </button>
+                <button
+                  className="del"
+                  title={`Edit ${sh.name}`}
+                  onClick={() => editShape(sh)}
+                >
+                  ✎
                 </button>
                 <button
                   className="del"

@@ -309,6 +309,60 @@ await page.click('.chipwrap .chip') // back to the image canvas
 await page.waitForFunction(() => !!window.__flat, null, { timeout: 10000 })
 await page.waitForTimeout(400)
 
+// --- edit an existing shape ------------------------------------------------------
+console.log('--- edit shape ---')
+await page.click('button[title="Edit Testlands"]')
+await page.waitForTimeout(300)
+check('editor opens with the shape loaded', await page.isVisible('.tracebar') &&
+  (await page.inputValue('.tracebar input')) === 'Testlands')
+check('save button offers Update for an existing name',
+  (await page.textContent('.tracebar button.primary')).trim() === 'Update')
+const loaded = await page.evaluate(() => window.__flat.trace())
+const hasV = (ring, x, y) => ring.some((p) => Math.abs(p[0] - x) < 2 && Math.abs(p[1] - y) < 2)
+check('both islands load as editable rings, original vertices exact',
+  loaded.rings.length === 2 && loaded.picks.length === 0 &&
+    loaded.rings[0].length === 5 && hasV(loaded.rings[0], 1400, 600),
+  `${loaded.rings.length} rings, ${loaded.rings[0]?.length} pts, corner ${hasV(loaded.rings[0] ?? [], 1400, 600)}`)
+
+// Move the (1400,600) corner to (1300,550), then Update.
+const eFrom = await page.evaluate(() => window.__flat.screenFromWorld([1400, 600]))
+const eTo = await page.evaluate(() => window.__flat.screenFromWorld([1300, 550]))
+await page.mouse.move(eFrom[0], eFrom[1])
+await page.mouse.down()
+await page.mouse.move(eTo[0], eTo[1], { steps: 5 })
+await page.mouse.up()
+await page.waitForTimeout(150)
+await page.click('.tracebar button.primary')
+await page.waitForTimeout(400)
+check('update keeps the library at two shapes',
+  await page.$$eval('.shapelist li', (els) => els.length) === 2)
+check('replace offers undo', ((await page.textContent('.undo')) ?? '').includes('Replaced'))
+const bboxUpd = await page.evaluate(() => window.__flat.bboxPx(window.__flat.items()[0].uid))
+check('existing placement follows the edit (1800x1150 px)',
+  Math.abs(bboxUpd.w - 1800) < 12 && Math.abs(bboxUpd.h - 1150) < 12,
+  `${bboxUpd.w.toFixed(0)}x${bboxUpd.h.toFixed(0)} px`)
+await page.click('.undo button')
+await page.waitForTimeout(300)
+const bboxBack = await page.evaluate(() => window.__flat.bboxPx(window.__flat.items()[0].uid))
+check('undo restores the old geometry in placements too',
+  Math.abs(bboxBack.w - 1700) < 12 && Math.abs(bboxBack.h - 1100) < 12,
+  `${bboxBack.w.toFixed(0)}x${bboxBack.h.toFixed(0)} px`)
+
+// Saving under a different name forks instead of replacing.
+await page.click('button[title="Edit Testlands"]')
+await page.waitForTimeout(300)
+await page.fill('.tracebar input', 'TestlandsB')
+check('save button says Save for a fresh name',
+  (await page.textContent('.tracebar button.primary')).trim() === 'Save')
+await page.click('.tracebar button.primary')
+await page.waitForTimeout(400)
+const forked = await page.$$eval('.shapelist li .meta strong', (els) => els.map((e) => e.textContent))
+check('fork leaves the original untouched',
+  forked.length === 3 && forked.includes('Testlands') && forked.includes('TestlandsB'), forked.join(', '))
+await page.click('button[title="Delete TestlandsB"]')
+await page.click('.modal button.danger')
+await page.waitForTimeout(300)
+
 // --- deletion: confirm dialog, cascade, undo -----------------------------------
 console.log('--- deletion ---')
 await page.click('.shapelist li button[title="Delete Testlands"]')
