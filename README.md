@@ -149,11 +149,15 @@ kept Canada in the source but filtered it out of the layers returned frame
 times to baseline (20.4ms vs 22.1ms alone, against 32.6ms drawn), which is how
 we know the source path is clean.
 
-## Rotation
+## Selection and rotation
 
-Each placed country has a rotation slider (-180° to 180°, clockwise). Clicking
-the degree readout resets it to 0. Rotation is part of the stored transform, so
-it composes with dragging without drift.
+Clicking a placed subject selects it: its panel row expands and a rotate
+handle appears on the map — a knob on a stalk from the subject's anchor, in
+the Figma mould. Drag the knob to rotate (Shift snaps to 15°), or nudge with
+[ and ] (Shift for 15°). The expanded row keeps a slider for exact values and
+the degree readout resets to 0 on click. Clicking empty map, pressing Escape,
+or clicking the subject again deselects. Rotation is part of the stored
+transform, so it composes with dragging without drift.
 
 ## Canvases
 

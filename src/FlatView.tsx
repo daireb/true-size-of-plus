@@ -10,6 +10,10 @@ import type { PlanePoint } from './lib/flat'
 import type { FlatPlaced, FlatViewport, ImageCanvasDef } from './lib/store'
 
 const D2R = Math.PI / 180
+const R2D = 180 / Math.PI
+/** Screen distance from a selected subject's anchor to its rotate knob. */
+const HANDLE_PX = 46
+const KNOB_R = 7
 
 export interface FlatViewHandle {
   /** Centre of the current viewport, in image pixels. */
@@ -22,6 +26,10 @@ interface Props {
   setPlaced: React.Dispatch<React.SetStateAction<FlatPlaced[]>>
   activeUid: string | null
   setActiveUid: (u: string | null) => void
+  /** Persistently selected subject: shows the rotate handle. */
+  selectedUid: string | null
+  onSelect: (u: string | null) => void
+  onRotate: (uid: string, bearing: number) => void
   /** When true, clicks are reported via onPick instead of starting drags. */
   picking: boolean
   picks: PlanePoint[]
@@ -70,6 +78,9 @@ const FlatView = forwardRef<FlatViewHandle, Props>(function FlatView(
     setPlaced,
     activeUid,
     setActiveUid,
+    selectedUid,
+    onSelect,
+    onRotate,
     picking,
     picks,
     traceRings = [],
@@ -90,8 +101,8 @@ const FlatView = forwardRef<FlatViewHandle, Props>(function FlatView(
   const sizeRef = useRef({ w: 0, h: 0 })
   const rafRef = useRef(0)
   const dragRef = useRef<
-    | { kind: 'item'; uid: string; offX: number; offY: number }
-    | { kind: 'pan'; lastX: number; lastY: number }
+    | { kind: 'item'; uid: string; offX: number; offY: number; startX: number; startY: number; moved: boolean }
+    | { kind: 'pan'; lastX: number; lastY: number; startX: number; startY: number; moved: boolean }
     | {
         kind: 'maybe-pick'
         wx: number
@@ -103,14 +114,19 @@ const FlatView = forwardRef<FlatViewHandle, Props>(function FlatView(
         moved: boolean
       }
     | { kind: 'trace-vertex'; ring: number; index: number }
+    | { kind: 'rotate'; uid: string }
     | null
   >(null)
 
   // Path2D per subject, in local px (km / kmPerPixel), origin at its centroid.
   const pathCache = useRef(new Map<string, { rings: unknown; kpp: number; path: Path2D }>())
 
-  const propsRef = useRef({ placed, activeUid, picks, traceRings, traceEditing, picking, def })
-  propsRef.current = { placed, activeUid, picks, traceRings, traceEditing, picking, def }
+  const propsRef = useRef({ placed, activeUid, selectedUid, picks, traceRings, traceEditing, picking, def })
+  propsRef.current = { placed, activeUid, selectedUid, picks, traceRings, traceEditing, picking, def }
+  const onSelectRef = useRef(onSelect)
+  onSelectRef.current = onSelect
+  const onRotateRef = useRef(onRotate)
+  onRotateRef.current = onRotate
   const onPickRef = useRef(onPick)
   onPickRef.current = onPick
   const onTraceMoveRef = useRef(onTraceMove)
@@ -192,6 +208,32 @@ const FlatView = forwardRef<FlatViewHandle, Props>(function FlatView(
       ctx.restore()
     }
 
+    // Rotate handle for the selected subject: a stalk from its anchor to a
+    // knob that tracks the bearing, so "up the stalk" is the shape's north.
+    const sel = items.find((p) => p.uid === propsRef.current.selectedUid)
+    if (sel && !propsRef.current.picking) {
+      const dWorld = HANDLE_PX / zoom
+      const a = sel.bearing * D2R
+      const kx = sel.target[0] + Math.sin(a) * dWorld
+      const ky = sel.target[1] - Math.cos(a) * dWorld
+      ctx.strokeStyle = '#6ea8fe'
+      ctx.lineWidth = 2 / zoom
+      ctx.beginPath()
+      ctx.moveTo(sel.target[0], sel.target[1])
+      ctx.lineTo(kx, ky)
+      ctx.stroke()
+      ctx.beginPath()
+      ctx.arc(kx, ky, KNOB_R / zoom, 0, Math.PI * 2)
+      ctx.fillStyle = '#6ea8fe'
+      ctx.fill()
+      ctx.strokeStyle = '#11151b'
+      ctx.stroke()
+      ctx.beginPath()
+      ctx.arc(sel.target[0], sel.target[1], 3 / zoom, 0, Math.PI * 2)
+      ctx.fillStyle = '#6ea8fe'
+      ctx.fill()
+    }
+
     // Trace overlay: completed islands, then the ring being drawn.
     const { traceRings: rings } = propsRef.current
     const handle = (x: number, y: number, r: number) => {
@@ -248,7 +290,7 @@ const FlatView = forwardRef<FlatViewHandle, Props>(function FlatView(
   // Redraw whenever React-visible inputs change.
   useEffect(() => {
     scheduleDraw()
-  }, [placed, activeUid, picks, traceRings, def.kmPerPixel, scheduleDraw])
+  }, [placed, activeUid, selectedUid, picks, traceRings, def.kmPerPixel, scheduleDraw])
 
   // Decode the image off the main thread.
   useEffect(() => {
@@ -325,6 +367,19 @@ const FlatView = forwardRef<FlatViewHandle, Props>(function FlatView(
       return [e.clientX - r.left, e.clientY - r.top] as PlanePoint
     }
 
+    /** Screen position of the selected subject's rotate knob, if shown. */
+    const knobScreen = (): PlanePoint | null => {
+      const { placed: items, selectedUid: sel, picking: pk } = propsRef.current
+      if (!sel || pk) return null
+      const it = items.find((p) => p.uid === sel)
+      const vp = vpRef.current
+      if (!it || !vp) return null
+      const a = it.bearing * D2R
+      const sx = it.target[0] * vp.zoom + vp.tx
+      const sy = it.target[1] * vp.zoom + vp.ty
+      return [sx + Math.sin(a) * HANDLE_PX, sy - Math.cos(a) * HANDLE_PX]
+    }
+
     // Screen-space hit test against the trace being edited. The current ring
     // is ring -1 and open; completed islands are closed.
     const hitTraceAt = (sx: number, sy: number) => {
@@ -377,6 +432,15 @@ const FlatView = forwardRef<FlatViewHandle, Props>(function FlatView(
         cv.setPointerCapture(e.pointerId)
         return
       }
+      // The rotate knob wins over everything under it.
+      const ks = knobScreen()
+      if (ks && Math.hypot(sx - ks[0], sy - ks[1]) <= KNOB_R + 5) {
+        dragRef.current = { kind: 'rotate', uid: propsRef.current.selectedUid! }
+        setActiveUid(propsRef.current.selectedUid)
+        cv.style.cursor = 'grabbing'
+        cv.setPointerCapture(e.pointerId)
+        return
+      }
       const uid = hitTest(wx, wy)
       if (uid) {
         const item = propsRef.current.placed.find((p) => p.uid === uid)!
@@ -385,11 +449,21 @@ const FlatView = forwardRef<FlatViewHandle, Props>(function FlatView(
           uid,
           offX: wx - item.target[0],
           offY: wy - item.target[1],
+          startX: e.clientX,
+          startY: e.clientY,
+          moved: false,
         }
         setActiveUid(uid)
         cv.style.cursor = 'grabbing'
       } else {
-        dragRef.current = { kind: 'pan', lastX: e.clientX, lastY: e.clientY }
+        dragRef.current = {
+          kind: 'pan',
+          lastX: e.clientX,
+          lastY: e.clientY,
+          startX: e.clientX,
+          startY: e.clientY,
+          moved: false,
+        }
       }
       cv.setPointerCapture(e.pointerId)
     }
@@ -407,7 +481,13 @@ const FlatView = forwardRef<FlatViewHandle, Props>(function FlatView(
           }
           cv.style.cursor = cursor
         } else {
-          cv.style.cursor = hitTest(wx, wy) ? 'grab' : ''
+          const ks = knobScreen()
+          cv.style.cursor =
+            ks && Math.hypot(sx - ks[0], sy - ks[1]) <= KNOB_R + 5
+              ? 'grab'
+              : hitTest(wx, wy)
+                ? 'grab'
+                : ''
         }
         return
       }
@@ -436,12 +516,26 @@ const FlatView = forwardRef<FlatViewHandle, Props>(function FlatView(
         }
         return
       }
+      if (drag.kind === 'rotate') {
+        const [sx, sy] = local(e)
+        const [wx, wy] = worldFromScreen(sx, sy)
+        const it = propsRef.current.placed.find((p) => p.uid === drag.uid)
+        if (!it) return
+        const raw = Math.atan2(wx - it.target[0], -(wy - it.target[1])) * R2D
+        const b = e.shiftKey ? Math.round(raw / 15) * 15 : Math.round(raw)
+        onRotateRef.current(drag.uid, b)
+        return
+      }
       if (drag.kind === 'item') {
+        if (!drag.moved && Math.hypot(e.clientX - drag.startX, e.clientY - drag.startY) > 4)
+          drag.moved = true
         const [sx, sy] = local(e)
         const [wx, wy] = worldFromScreen(sx, sy)
         const target: PlanePoint = [wx - drag.offX, wy - drag.offY]
         setPlaced((prev) => prev.map((p) => (p.uid === drag.uid ? { ...p, target } : p)))
       } else {
+        if (!drag.moved && Math.hypot(e.clientX - drag.startX, e.clientY - drag.startY) > 4)
+          drag.moved = true
         const vp = vpRef.current ?? fitViewport()
         vpRef.current = {
           ...vp,
@@ -457,7 +551,14 @@ const FlatView = forwardRef<FlatViewHandle, Props>(function FlatView(
     const onUp = (e: PointerEvent) => {
       const drag = dragRef.current
       dragRef.current = null
-      if (drag?.kind === 'item') setActiveUid(null)
+      if (drag?.kind === 'rotate') setActiveUid(null)
+      if (drag?.kind === 'item') {
+        setActiveUid(null)
+        // A press that never moved is a click: select (or toggle off).
+        if (!drag.moved)
+          onSelectRef.current(propsRef.current.selectedUid === drag.uid ? null : drag.uid)
+      }
+      if (drag?.kind === 'pan' && !drag.moved) onSelectRef.current(null)
       if (drag?.kind === 'maybe-pick') {
         // Never moved: it was a click, so it places a point where it started.
         if (!drag.moved) onPickRef.current([drag.wx, drag.wy])

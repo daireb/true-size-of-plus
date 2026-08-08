@@ -144,6 +144,40 @@ if (state.renderedFeatures > 0) {
     process.exit(1)
   }
   console.log('DRAG OK')
+
+  // --- rotate handle on Earth ------------------------------------------------
+  // The drag moved the country south; find a point inside it again.
+  const grab2 = await page.evaluate(() => {
+    const mp = window.__map
+    const { width, height } = mp.getCanvas().getBoundingClientRect()
+    for (let y = 40; y < height - 40; y += 12)
+      for (let x = 360; x < width - 40; x += 12)
+        if (mp.queryRenderedFeatures([x, y], { layers: ['countries-active-fill', 'countries-static-fill'] }).length)
+          return { x, y }
+    return null
+  })
+  await page.mouse.click(grab2.x, grab2.y) // click (no move) selects
+  await page.waitForTimeout(300)
+  console.log('select on click:', await page.isVisible('.placed li.open') ? 'OK' : 'FAILED')
+  const hs = await page.evaluate(async () => {
+    const d = await window.__map.getSource('rotate-handle').getData()
+    const knob = d.features.find((f) => f.properties?.role === 'knob')
+    const anchor = d.features.find((f) => f.properties?.role === 'anchor')
+    const k = window.__map.project(knob.geometry.coordinates)
+    const a = window.__map.project(anchor.geometry.coordinates)
+    return { k: [k.x, k.y], a: [a.x, a.y] }
+  })
+  await page.mouse.move(hs.k[0], hs.k[1])
+  await page.mouse.down()
+  await page.mouse.move(hs.a[0] + 80, hs.a[1], { steps: 6 })
+  await page.mouse.up()
+  await page.waitForTimeout(300)
+  const deg = await page.evaluate(() => document.querySelector('.deg')?.textContent)
+  console.log('knob drag on Earth:', /^(8[89]|9[012])°$/.test(deg ?? '') ? `OK (${deg})` : `FAILED (${deg})`)
+  if (!/^(8[89]|9[012])°$/.test(deg ?? '')) {
+    await browser.close()
+    process.exit(1)
+  }
 }
 
 await browser.close()

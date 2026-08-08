@@ -122,6 +122,51 @@ await page.waitForTimeout(200)
 check('rotation applies', await page.evaluate(() => window.__flat.items()[0].bearing) === 55,
   `bearing ${await page.evaluate(() => window.__flat.items()[0].bearing)}`)
 
+// --- on-map rotate handle -----------------------------------------------------
+console.log('--- rotate handle ---')
+await page.mouse.click(1200, 100) // empty space deselects
+await page.waitForTimeout(200)
+check('clicking empty space deselects', !(await page.isVisible('.placed li.open')))
+const subj = await page.evaluate(() => {
+  const it = window.__flat.items()[0]
+  return { s: window.__flat.screenFromWorld(it.target), b: it.bearing }
+})
+await page.mouse.click(subj.s[0], subj.s[1]) // click subject selects it
+await page.waitForTimeout(200)
+check('clicking a subject selects it', await page.isVisible('.placed li.open'))
+
+// Knob sits 46px from the anchor in the bearing direction (55°). Drag it to
+// due-right of the anchor: bearing becomes 90.
+const a55 = (55 * Math.PI) / 180
+const knob = [subj.s[0] + Math.sin(a55) * 46, subj.s[1] - Math.cos(a55) * 46]
+await page.mouse.move(knob[0], knob[1])
+await page.mouse.down()
+await page.mouse.move(subj.s[0] + 80, subj.s[1], { steps: 6 })
+await page.mouse.up()
+await page.waitForTimeout(200)
+const bKnob = await page.evaluate(() => window.__flat.items()[0].bearing)
+check('dragging the knob rotates the subject', Math.abs(bKnob - 90) <= 2, `bearing ${bKnob}`)
+
+// Keyboard nudges on the selection.
+await page.keyboard.press(']')
+await page.waitForTimeout(120)
+const bNudge = await page.evaluate(() => window.__flat.items()[0].bearing)
+check('] nudges +1°', bNudge === bKnob + 1, `bearing ${bNudge}`)
+await page.keyboard.press('Shift+[')
+await page.waitForTimeout(120)
+const bBig = await page.evaluate(() => window.__flat.items()[0].bearing)
+check('Shift+[ nudges -15°', bBig === bNudge - 15, `bearing ${bBig}`)
+
+// Back to 55° so the persistence assertions below stay meaningful.
+await page.evaluate(() => {
+  const s = document.querySelector('.rotate input')
+  const set = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set
+  set.call(s, '55')
+  s.dispatchEvent(new Event('input', { bubbles: true }))
+  s.dispatchEvent(new Event('change', { bubbles: true }))
+})
+await page.waitForTimeout(200)
+
 // --- pan / zoom ---------------------------------------------------------------
 const vp0 = await page.evaluate(() => window.__flat.viewport())
 await page.mouse.move(1100, 700)

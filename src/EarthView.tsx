@@ -32,6 +32,11 @@ const STATIC_LINE = 'countries-static-line'
 const ACTIVE_FILL = 'countries-active-fill'
 const ACTIVE_LINE = 'countries-active-line'
 const PICK_SOURCE = 'pick-overlay'
+const HANDLE_SOURCE = 'rotate-handle'
+const R2D = 180 / Math.PI
+const D2R = Math.PI / 180
+/** Screen distance from a selected subject's anchor to its rotate knob. */
+const HANDLE_PX = 46
 /** Active first: it renders on top, so it should win hit-testing too. */
 const FILL_LAYERS = [ACTIVE_FILL, STATIC_FILL]
 
@@ -64,6 +69,10 @@ const createStyle = (): maplibregl.StyleSpecification => ({
       type: 'geojson',
       data: { type: 'FeatureCollection', features: [] },
     },
+    [HANDLE_SOURCE]: {
+      type: 'geojson',
+      data: { type: 'FeatureCollection', features: [] },
+    },
   },
   layers: [
     { id: 'basemap', type: 'raster', source: 'basemap' },
@@ -90,6 +99,25 @@ const createStyle = (): maplibregl.StyleSpecification => ({
       type: 'line',
       source: ACTIVE_SOURCE,
       paint: { 'line-color': ['get', 'color'], 'line-width': 1.5 },
+    },
+    {
+      id: 'handle-stalk',
+      type: 'line',
+      source: HANDLE_SOURCE,
+      filter: ['==', ['geometry-type'], 'LineString'],
+      paint: { 'line-color': '#6ea8fe', 'line-width': 2 },
+    },
+    {
+      id: 'handle-knob',
+      type: 'circle',
+      source: HANDLE_SOURCE,
+      filter: ['==', ['geometry-type'], 'Point'],
+      paint: {
+        'circle-radius': ['case', ['==', ['get', 'role'], 'knob'], 7, 3],
+        'circle-color': '#6ea8fe',
+        'circle-stroke-color': '#11151b',
+        'circle-stroke-width': ['case', ['==', ['get', 'role'], 'knob'], 2, 0],
+      },
     },
     {
       id: 'pick-line',
@@ -125,6 +153,10 @@ interface Props {
   setPlaced: React.Dispatch<React.SetStateAction<EarthPlaced[]>>
   activeUid: string | null
   setActiveUid: (u: string | null) => void
+  /** Persistently selected subject: shows the rotate handle. */
+  selectedUid: string | null
+  onSelect: (u: string | null) => void
+  onRotate: (uid: string, bearing: number) => void
   /** When true, clicks are reported via onPick instead of starting drags. */
   picking: boolean
   picks: LonLat[]
@@ -146,6 +178,9 @@ const EarthView = forwardRef<EarthViewHandle, Props>(function EarthView(
     setPlaced,
     activeUid,
     setActiveUid,
+    selectedUid,
+    onSelect,
+    onRotate,
     picking,
     picks,
     traceRings = [],
@@ -162,7 +197,17 @@ const EarthView = forwardRef<EarthViewHandle, Props>(function EarthView(
   const mapRef = useRef<maplibregl.Map | null>(null)
   const [mapReady, setMapReady] = useState(false)
 
-  const dragRef = useRef<{ uid: string; grab: LonLat; from: LonLat } | null>(null)
+  const dragRef = useRef<
+    | { kind: 'move'; uid: string; grab: LonLat; from: LonLat; moved: boolean; start: { x: number; y: number } }
+    | { kind: 'rotate'; uid: string }
+    | null
+  >(null)
+  const selRef = useRef<{ selectedUid: string | null; placed: EarthPlaced[] }>({ selectedUid, placed })
+  selRef.current = { selectedUid, placed }
+  const onSelectRef = useRef(onSelect)
+  onSelectRef.current = onSelect
+  const onRotateRef = useRef(onRotate)
+  onRotateRef.current = onRotate
   const onPickRef = useRef(onPick)
   onPickRef.current = onPick
   const onTraceMoveRef = useRef(onTraceMove)
@@ -358,6 +403,53 @@ const EarthView = forwardRef<EarthViewHandle, Props>(function EarthView(
     src?.setData({ type: 'FeatureCollection', features })
   }, [picks, traceRings, mapReady])
 
+  // Rotate handle for the selected subject. The knob sits a fixed number of
+  // SCREEN pixels from the anchor, so its geographic position must be
+  // recomputed on every camera move.
+  useEffect(() => {
+    const map = mapRef.current
+    if (!map || !mapReady) return
+    const src = map.getSource(HANDLE_SOURCE) as maplibregl.GeoJSONSource | undefined
+    if (!src) return
+
+    const update = () => {
+      const { selectedUid: sel, placed: items } = selRef.current
+      const p = !picking && sel ? items.find((x) => x.uid === sel) : undefined
+      if (!p) {
+        src.setData({ type: 'FeatureCollection', features: [] })
+        return
+      }
+      const c = map.project(p.target)
+      const a = p.bearing * D2R
+      const knob = map.unproject([
+        c.x + Math.sin(a) * HANDLE_PX,
+        c.y - Math.cos(a) * HANDLE_PX,
+      ])
+      src.setData({
+        type: 'FeatureCollection',
+        features: [
+          {
+            type: 'Feature',
+            geometry: { type: 'LineString', coordinates: [p.target, [knob.lng, knob.lat]] },
+            properties: {},
+          },
+          { type: 'Feature', geometry: { type: 'Point', coordinates: p.target }, properties: { role: 'anchor' } },
+          {
+            type: 'Feature',
+            geometry: { type: 'Point', coordinates: [knob.lng, knob.lat] },
+            properties: { role: 'knob' },
+          },
+        ],
+      })
+    }
+
+    update()
+    map.on('move', update)
+    return () => {
+      map.off('move', update)
+    }
+  }, [mapReady, placed, selectedUid, picking])
+
   useEffect(() => {
     const map = mapRef.current
     if (!map || !mapReady || !picking) return
@@ -462,8 +554,27 @@ const EarthView = forwardRef<EarthViewHandle, Props>(function EarthView(
     const map = mapRef.current
     if (!map || !mapReady) return
 
+    const knobScreen = () => {
+      const { selectedUid: sel, placed: items } = selRef.current
+      const p = sel ? items.find((x) => x.uid === sel) : undefined
+      if (!p) return null
+      const c = map.project(p.target)
+      const a = p.bearing * D2R
+      return { x: c.x + Math.sin(a) * HANDLE_PX, y: c.y - Math.cos(a) * HANDLE_PX, uid: p.uid }
+    }
+
     const onDown = (e: maplibregl.MapMouseEvent | maplibregl.MapTouchEvent) => {
       if (picking) return
+      // The rotate knob wins over everything under it.
+      const ks = knobScreen()
+      if (ks && Math.hypot(e.point.x - ks.x, e.point.y - ks.y) <= 12) {
+        e.preventDefault()
+        dragRef.current = { kind: 'rotate', uid: ks.uid }
+        setActiveUid(ks.uid)
+        map.dragPan.disable()
+        map.getCanvas().style.cursor = 'grabbing'
+        return
+      }
       const hit = map.queryRenderedFeatures(e.point, { layers: FILL_LAYERS })[0]
       if (!hit) return
       const uid = String(hit.properties?.uid)
@@ -471,7 +582,14 @@ const EarthView = forwardRef<EarthViewHandle, Props>(function EarthView(
       if (!p) return
 
       e.preventDefault()
-      dragRef.current = { uid, grab: [e.lngLat.lng, e.lngLat.lat], from: p.target }
+      dragRef.current = {
+        kind: 'move',
+        uid,
+        grab: [e.lngLat.lng, e.lngLat.lat],
+        from: p.target,
+        moved: false,
+        start: { x: e.point.x, y: e.point.y },
+      }
       setActiveUid(uid)
       map.dragPan.disable()
       map.getCanvas().style.cursor = 'grabbing'
@@ -481,10 +599,23 @@ const EarthView = forwardRef<EarthViewHandle, Props>(function EarthView(
       const drag = dragRef.current
       if (!drag) {
         if (picking) return
-        const over = map.queryRenderedFeatures(e.point, { layers: FILL_LAYERS })
-        map.getCanvas().style.cursor = over.length ? 'grab' : ''
+        const ks = knobScreen()
+        const overKnob = ks && Math.hypot(e.point.x - ks.x, e.point.y - ks.y) <= 12
+        const over = overKnob || map.queryRenderedFeatures(e.point, { layers: FILL_LAYERS }).length
+        map.getCanvas().style.cursor = over ? 'grab' : ''
         return
       }
+      if (drag.kind === 'rotate') {
+        const p = selRef.current.placed.find((x) => x.uid === drag.uid)
+        if (!p) return
+        const c = map.project(p.target)
+        const raw = Math.atan2(e.point.x - c.x, -(e.point.y - c.y)) * R2D
+        const shift = (e.originalEvent as MouseEvent).shiftKey
+        onRotateRef.current(drag.uid, shift ? Math.round(raw / 15) * 15 : Math.round(raw))
+        return
+      }
+      if (!drag.moved && Math.hypot(e.point.x - drag.start.x, e.point.y - drag.start.y) > 4)
+        drag.moved = true
       // Only the target point moves. The outline is re-derived from home, so
       // this stays a pure function of where the cursor is now.
       const target: LonLat = [
@@ -495,11 +626,25 @@ const EarthView = forwardRef<EarthViewHandle, Props>(function EarthView(
     }
 
     const onUp = () => {
-      if (!dragRef.current) return
+      const drag = dragRef.current
+      if (!drag) return
       dragRef.current = null
       setActiveUid(null)
+      // A press that never moved is a click: select (or toggle off).
+      if (drag.kind === 'move' && !drag.moved)
+        onSelectRef.current(selRef.current.selectedUid === drag.uid ? null : drag.uid)
       map.dragPan.enable()
       map.getCanvas().style.cursor = ''
+    }
+
+    // Clicking empty basemap clears the selection; MapLibre only fires
+    // 'click' when the pointer didn't drag, so panning never deselects.
+    const onEmptyClick = (e: maplibregl.MapMouseEvent) => {
+      if (picking) return
+      const ks = knobScreen()
+      if (ks && Math.hypot(e.point.x - ks.x, e.point.y - ks.y) <= 12) return
+      if (!map.queryRenderedFeatures(e.point, { layers: FILL_LAYERS }).length)
+        onSelectRef.current(null)
     }
 
     map.on('mousedown', onDown)
@@ -509,6 +654,7 @@ const EarthView = forwardRef<EarthViewHandle, Props>(function EarthView(
     map.on('mouseup', onUp)
     map.on('touchend', onUp)
     map.on('mouseout', onUp)
+    map.on('click', onEmptyClick)
 
     return () => {
       map.off('mousedown', onDown)
@@ -518,6 +664,7 @@ const EarthView = forwardRef<EarthViewHandle, Props>(function EarthView(
       map.off('mouseup', onUp)
       map.off('touchend', onUp)
       map.off('mouseout', onUp)
+      map.off('click', onEmptyClick)
     }
   }, [mapReady, placed, picking, setPlaced, setActiveUid])
 

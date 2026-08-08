@@ -622,6 +622,35 @@ export default function App() {
     setQuery('')
   }
 
+  const rotateTo = useCallback((uid: string, bearing: number) => {
+    // Keep within the slider's -180..180 range whatever the gesture produced.
+    const b = ((((bearing + 180) % 360) + 360) % 360) - 180
+    setPlacedFor(activeId)((prev) =>
+      prev.map((p) => (p.uid === uid ? ({ ...p, bearing: b } as AnyPlaced) : p))
+    )
+  }, [activeId, setPlacedFor])
+
+  // Nudge the selected subject's rotation from the keyboard: [ and ] by 1°,
+  // with Shift by 15°. Escape clears the selection.
+  useEffect(() => {
+    if (!selectedUid || mode !== 'none') return
+    const h = (e: KeyboardEvent) => {
+      if ((e.target as HTMLElement).tagName === 'INPUT') return
+      if (e.key === '[' || e.key === ']' || e.key === '{' || e.key === '}') {
+        const step = e.shiftKey ? 15 : 1
+        const dir = e.key === ']' || e.key === '}' ? 1 : -1
+        const cur = placed.find((p) => p.uid === selectedUid)
+        if (!cur) return
+        e.preventDefault()
+        rotateTo(selectedUid, cur.bearing + dir * step)
+      } else if (e.key === 'Escape' && !confirm) {
+        setSelectedUid(null)
+      }
+    }
+    window.addEventListener('keydown', h)
+    return () => window.removeEventListener('keydown', h)
+  }, [selectedUid, mode, placed, rotateTo, confirm])
+
   const updatePlaced = (uid: string, patch: Partial<AnyPlaced>) =>
     setPlacedFor(activeId)((prev) =>
       prev.map((p) => (p.uid === uid ? ({ ...p, ...patch } as AnyPlaced) : p))
@@ -647,6 +676,9 @@ export default function App() {
           setPlaced={setPlacedFor(EARTH_ID) as React.Dispatch<React.SetStateAction<EarthPlaced[]>>}
           activeUid={onEarth ? activeUid : null}
           setActiveUid={setActiveUid}
+          selectedUid={onEarth ? selectedUid : null}
+          onSelect={setSelectedUid}
+          onRotate={rotateTo}
           picking={onEarth && mode === 'trace'}
           picks={onEarth && mode === 'trace' ? (picks as LonLat[]) : []}
           traceRings={onEarth && mode === 'trace' ? (traceRings as LonLat[][]) : []}
@@ -669,6 +701,9 @@ export default function App() {
             setPlaced={setPlacedFor(activeId) as React.Dispatch<React.SetStateAction<FlatPlaced[]>>}
             activeUid={activeUid}
             setActiveUid={setActiveUid}
+            selectedUid={selectedUid}
+            onSelect={setSelectedUid}
+            onRotate={rotateTo}
             picking={mode === 'calibrate' ? picks.length < 2 : mode === 'trace'}
             picks={picks}
             traceRings={mode === 'trace' ? traceRings : []}
