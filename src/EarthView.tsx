@@ -12,7 +12,8 @@ import 'maplibre-gl/dist/maplibre-gl.css'
 
 import { createPlacement, transformGeometry, clamp } from './lib/geo'
 import type { LonLat } from './lib/geo'
-import { planeToGeo } from './lib/flat'
+import { planeToGeo, hitTracePoint } from './lib/flat'
+import type { PlanePoint } from './lib/flat'
 import type { EarthPlaced, EarthViewport } from './lib/store'
 
 /**
@@ -127,12 +128,28 @@ interface Props {
   /** When true, clicks are reported via onPick instead of starting drags. */
   picking: boolean
   picks: LonLat[]
+  /** Completed islands of a trace in progress. */
+  traceRings?: LonLat[][]
   onPick: (p: LonLat) => void
+  onTraceMove?: (ring: number, index: number, p: LonLat) => void
+  onTraceInsert?: (ring: number, index: number, p: LonLat) => void
   onViewportChange?: (v: EarthViewport) => void
 }
 
 const EarthView = forwardRef<EarthViewHandle, Props>(function EarthView(
-  { placed, setPlaced, activeUid, setActiveUid, picking, picks, onPick, onViewportChange },
+  {
+    placed,
+    setPlaced,
+    activeUid,
+    setActiveUid,
+    picking,
+    picks,
+    traceRings = [],
+    onPick,
+    onTraceMove,
+    onTraceInsert,
+    onViewportChange,
+  },
   ref
 ) {
   const containerRef = useRef<HTMLDivElement>(null)
@@ -142,6 +159,15 @@ const EarthView = forwardRef<EarthViewHandle, Props>(function EarthView(
   const dragRef = useRef<{ uid: string; grab: LonLat; from: LonLat } | null>(null)
   const onPickRef = useRef(onPick)
   onPickRef.current = onPick
+  const onTraceMoveRef = useRef(onTraceMove)
+  onTraceMoveRef.current = onTraceMove
+  const onTraceInsertRef = useRef(onTraceInsert)
+  onTraceInsertRef.current = onTraceInsert
+  const traceStateRef = useRef({ picks, traceRings })
+  traceStateRef.current = { picks, traceRings }
+  /** Set when a mousedown was consumed by vertex/edge editing, so the click
+   *  MapLibre fires afterwards must not also append a point. */
+  const suppressClickRef = useRef(false)
   const onViewportRef = useRef(onViewportChange)
   onViewportRef.current = onViewportChange
 
@@ -293,40 +319,107 @@ const EarthView = forwardRef<EarthViewHandle, Props>(function EarthView(
     const src = mapRef.current?.getSource(PICK_SOURCE) as
       | maplibregl.GeoJSONSource
       | undefined
-    src?.setData({
-      type: 'FeatureCollection',
-      features: !picks.length
-        ? []
-        : [
-            ...picks.map(
-              (p): Feature => ({
-                type: 'Feature',
-                geometry: { type: 'Point', coordinates: p },
-                properties: {},
-              })
-            ),
-            ...(picks.length >= 2
-              ? [
-                  {
-                    type: 'Feature' as const,
-                    geometry: { type: 'LineString' as const, coordinates: picks },
-                    properties: {},
-                  },
-                ]
-              : []),
-          ],
-    })
-  }, [picks, mapReady])
+    const features: Feature[] = []
+    for (const ring of traceRings) {
+      features.push({
+        type: 'Feature',
+        geometry: { type: 'LineString', coordinates: [...ring, ring[0]] },
+        properties: {},
+      })
+      for (const p of ring)
+        features.push({
+          type: 'Feature',
+          geometry: { type: 'Point', coordinates: p },
+          properties: {},
+        })
+    }
+    for (const p of picks)
+      features.push({
+        type: 'Feature',
+        geometry: { type: 'Point', coordinates: p },
+        properties: {},
+      })
+    if (picks.length >= 2)
+      features.push({
+        type: 'Feature',
+        geometry: { type: 'LineString', coordinates: picks },
+        properties: {},
+      })
+    src?.setData({ type: 'FeatureCollection', features })
+  }, [picks, traceRings, mapReady])
 
   useEffect(() => {
     const map = mapRef.current
     if (!map || !mapReady || !picking) return
-    const onClick = (e: maplibregl.MapMouseEvent) =>
+
+    // Screen-space hit test against the trace. Ring -1 is the ring being
+    // drawn (open); completed islands are closed.
+    const hitTraceAt = (sx: number, sy: number) => {
+      const { picks: pk, traceRings: rings } = traceStateRef.current
+      const toScreen = (p: LonLat): PlanePoint => {
+        const q = map.project(p)
+        return [q.x, q.y]
+      }
+      return hitTracePoint(
+        [
+          ...rings.map((pts, i) => ({ ring: i, pts: pts.map(toScreen), closed: true })),
+          { ring: -1, pts: pk.map(toScreen), closed: false },
+        ],
+        sx,
+        sy
+      )
+    }
+
+    let editing: { ring: number; index: number } | null = null
+
+    const onDown = (e: maplibregl.MapMouseEvent) => {
+      const hit = hitTraceAt(e.point.x, e.point.y)
+      if (!hit) return
+      if (hit.kind === 'edge')
+        onTraceInsertRef.current?.(hit.ring, hit.index, [e.lngLat.lng, e.lngLat.lat])
+      editing = { ring: hit.ring, index: hit.index }
+      suppressClickRef.current = true
+      e.preventDefault()
+      map.dragPan.disable()
+    }
+    const onMove = (e: maplibregl.MapMouseEvent) => {
+      if (!editing) {
+        const hit = hitTraceAt(e.point.x, e.point.y)
+        map.getCanvas().style.cursor = hit
+          ? hit.kind === 'vertex'
+            ? 'move'
+            : 'copy'
+          : 'crosshair'
+        return
+      }
+      onTraceMoveRef.current?.(editing.ring, editing.index, [e.lngLat.lng, e.lngLat.lat])
+    }
+    const onUp = () => {
+      if (!editing) return
+      editing = null
+      map.dragPan.enable()
+    }
+    // MapLibre only fires 'click' when the pointer didn't drag, so panning
+    // while tracing works natively; the suppress flag covers edit-mousedowns.
+    const onClick = (e: maplibregl.MapMouseEvent) => {
+      if (suppressClickRef.current) {
+        suppressClickRef.current = false
+        return
+      }
       onPickRef.current([e.lngLat.lng, e.lngLat.lat])
+    }
+
+    map.on('mousedown', onDown)
+    map.on('mousemove', onMove)
+    map.on('mouseup', onUp)
     map.on('click', onClick)
     map.getCanvas().style.cursor = 'crosshair'
     return () => {
+      map.off('mousedown', onDown)
+      map.off('mousemove', onMove)
+      map.off('mouseup', onUp)
       map.off('click', onClick)
+      map.dragPan.enable()
       map.getCanvas().style.cursor = ''
     }
   }, [picking, mapReady])

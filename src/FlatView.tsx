@@ -5,7 +5,7 @@ import {
   useImperativeHandle,
   useRef,
 } from 'react'
-import { planeBounds } from './lib/flat'
+import { planeBounds, hitTracePoint } from './lib/flat'
 import type { PlanePoint } from './lib/flat'
 import type { FlatPlaced, FlatViewport, ImageCanvasDef } from './lib/store'
 
@@ -25,7 +25,13 @@ interface Props {
   /** When true, clicks are reported via onPick instead of starting drags. */
   picking: boolean
   picks: PlanePoint[]
+  /** Completed islands of a trace in progress. */
+  traceRings?: PlanePoint[][]
+  /** Enables vertex dragging and edge insertion on the trace. */
+  traceEditing?: boolean
   onPick: (p: PlanePoint) => void
+  onTraceMove?: (ring: number, index: number, p: PlanePoint) => void
+  onTraceInsert?: (ring: number, index: number, p: PlanePoint) => void
   initialViewport?: FlatViewport
   onViewportChange?: (v: FlatViewport) => void
 }
@@ -36,6 +42,7 @@ interface TestHook {
   worldFromScreen(p: PlanePoint): PlanePoint
   hitAt(sx: number, sy: number): string | null
   count(): number
+  trace(): { picks: PlanePoint[]; rings: PlanePoint[][] }
   /** Drawn footprint of a subject in image px, from its actual rings. */
   bboxPx(uid: string): { w: number; h: number } | null
   items(): { uid: string; target: PlanePoint; bearing: number }[]
@@ -61,7 +68,11 @@ const FlatView = forwardRef<FlatViewHandle, Props>(function FlatView(
     setActiveUid,
     picking,
     picks,
+    traceRings = [],
+    traceEditing = false,
     onPick,
+    onTraceMove,
+    onTraceInsert,
     initialViewport,
     onViewportChange,
   },
@@ -75,16 +86,31 @@ const FlatView = forwardRef<FlatViewHandle, Props>(function FlatView(
   const dragRef = useRef<
     | { kind: 'item'; uid: string; offX: number; offY: number }
     | { kind: 'pan'; lastX: number; lastY: number }
+    | {
+        kind: 'maybe-pick'
+        wx: number
+        wy: number
+        startX: number
+        startY: number
+        lastX: number
+        lastY: number
+        moved: boolean
+      }
+    | { kind: 'trace-vertex'; ring: number; index: number }
     | null
   >(null)
 
   // Path2D per subject, in local px (km / kmPerPixel), origin at its centroid.
   const pathCache = useRef(new Map<string, { rings: unknown; kpp: number; path: Path2D }>())
 
-  const propsRef = useRef({ placed, activeUid, picks, picking, def })
-  propsRef.current = { placed, activeUid, picks, picking, def }
+  const propsRef = useRef({ placed, activeUid, picks, traceRings, traceEditing, picking, def })
+  propsRef.current = { placed, activeUid, picks, traceRings, traceEditing, picking, def }
   const onPickRef = useRef(onPick)
   onPickRef.current = onPick
+  const onTraceMoveRef = useRef(onTraceMove)
+  onTraceMoveRef.current = onTraceMove
+  const onTraceInsertRef = useRef(onTraceInsert)
+  onTraceInsertRef.current = onTraceInsert
   const onViewportRef = useRef(onViewportChange)
   onViewportRef.current = onViewportChange
 
@@ -156,7 +182,28 @@ const FlatView = forwardRef<FlatViewHandle, Props>(function FlatView(
       ctx.restore()
     }
 
-    // Calibration / trace picks.
+    // Trace overlay: completed islands, then the ring being drawn.
+    const { traceRings: rings } = propsRef.current
+    const handle = (x: number, y: number, r: number) => {
+      ctx.beginPath()
+      ctx.arc(x, y, r / zoom, 0, Math.PI * 2)
+      ctx.fillStyle = '#ffd166'
+      ctx.fill()
+      ctx.strokeStyle = '#1b1f27'
+      ctx.lineWidth = 2 / zoom
+      ctx.stroke()
+    }
+    for (const ring of rings) {
+      ctx.strokeStyle = '#ffd166'
+      ctx.lineWidth = 2 / zoom
+      ctx.setLineDash([6 / zoom, 4 / zoom])
+      ctx.beginPath()
+      ring.forEach(([x, y], i) => (i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y)))
+      ctx.closePath()
+      ctx.stroke()
+      ctx.setLineDash([])
+      for (const [x, y] of ring) handle(x, y, 4)
+    }
     if (pk.length) {
       ctx.strokeStyle = '#ffd166'
       ctx.lineWidth = 2.5 / zoom
@@ -166,16 +213,17 @@ const FlatView = forwardRef<FlatViewHandle, Props>(function FlatView(
         pk.forEach(([x, y], i) => (i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y)))
         ctx.stroke()
       }
-      ctx.setLineDash([])
-      for (const [x, y] of pk) {
+      // Faint closing hint once the ring could be finished.
+      if (pk.length >= 3) {
+        ctx.globalAlpha = 0.35
         ctx.beginPath()
-        ctx.arc(x, y, 5 / zoom, 0, Math.PI * 2)
-        ctx.fillStyle = '#ffd166'
-        ctx.fill()
-        ctx.strokeStyle = '#1b1f27'
-        ctx.lineWidth = 2 / zoom
+        ctx.moveTo(pk[pk.length - 1][0], pk[pk.length - 1][1])
+        ctx.lineTo(pk[0][0], pk[0][1])
         ctx.stroke()
+        ctx.globalAlpha = 1
       }
+      ctx.setLineDash([])
+      for (const [x, y] of pk) handle(x, y, 5)
     }
   }, [fitViewport, pathFor])
 
@@ -190,7 +238,7 @@ const FlatView = forwardRef<FlatViewHandle, Props>(function FlatView(
   // Redraw whenever React-visible inputs change.
   useEffect(() => {
     scheduleDraw()
-  }, [placed, activeUid, picks, def.kmPerPixel, scheduleDraw])
+  }, [placed, activeUid, picks, traceRings, def.kmPerPixel, scheduleDraw])
 
   // Decode the image off the main thread.
   useEffect(() => {
@@ -267,11 +315,52 @@ const FlatView = forwardRef<FlatViewHandle, Props>(function FlatView(
       return [e.clientX - r.left, e.clientY - r.top] as PlanePoint
     }
 
+    // Screen-space hit test against the trace being edited. The current ring
+    // is ring -1 and open; completed islands are closed.
+    const hitTraceAt = (sx: number, sy: number) => {
+      const vp = vpRef.current
+      if (!vp) return null
+      const toScreen = (p: PlanePoint): PlanePoint => [
+        p[0] * vp.zoom + vp.tx,
+        p[1] * vp.zoom + vp.ty,
+      ]
+      const { picks: pk, traceRings: rings } = propsRef.current
+      return hitTracePoint(
+        [
+          ...rings.map((pts, i) => ({ ring: i, pts: pts.map(toScreen), closed: true })),
+          { ring: -1, pts: pk.map(toScreen), closed: false },
+        ],
+        sx,
+        sy
+      )
+    }
+
     const onDown = (e: PointerEvent) => {
       const [sx, sy] = local(e)
       const [wx, wy] = worldFromScreen(sx, sy)
       if (propsRef.current.picking) {
-        onPickRef.current([wx, wy])
+        // Grab a vertex, split an edge, or — failing both — wait to see
+        // whether this press is a click (add a point) or a drag (pan).
+        if (propsRef.current.traceEditing) {
+          const hit = hitTraceAt(sx, sy)
+          if (hit) {
+            if (hit.kind === 'edge') onTraceInsertRef.current?.(hit.ring, hit.index, [wx, wy])
+            dragRef.current = { kind: 'trace-vertex', ring: hit.ring, index: hit.index }
+            cv.setPointerCapture(e.pointerId)
+            return
+          }
+        }
+        dragRef.current = {
+          kind: 'maybe-pick',
+          wx,
+          wy,
+          startX: e.clientX,
+          startY: e.clientY,
+          lastX: e.clientX,
+          lastY: e.clientY,
+          moved: false,
+        }
+        cv.setPointerCapture(e.pointerId)
         return
       }
       const uid = hitTest(wx, wy)
@@ -296,11 +385,41 @@ const FlatView = forwardRef<FlatViewHandle, Props>(function FlatView(
       if (!drag) {
         const [sx, sy] = local(e)
         const [wx, wy] = worldFromScreen(sx, sy)
-        cv.style.cursor = propsRef.current.picking
-          ? 'crosshair'
-          : hitTest(wx, wy)
-            ? 'grab'
-            : ''
+        if (propsRef.current.picking) {
+          let cursor = 'crosshair'
+          if (propsRef.current.traceEditing) {
+            const hit = hitTraceAt(sx, sy)
+            if (hit) cursor = hit.kind === 'vertex' ? 'move' : 'copy'
+          }
+          cv.style.cursor = cursor
+        } else {
+          cv.style.cursor = hitTest(wx, wy) ? 'grab' : ''
+        }
+        return
+      }
+      if (drag.kind === 'trace-vertex') {
+        const [sx, sy] = local(e)
+        const [wx, wy] = worldFromScreen(sx, sy)
+        onTraceMoveRef.current?.(drag.ring, drag.index, [wx, wy])
+        return
+      }
+      if (drag.kind === 'maybe-pick') {
+        if (
+          !drag.moved &&
+          Math.hypot(e.clientX - drag.startX, e.clientY - drag.startY) > 4
+        )
+          drag.moved = true
+        if (drag.moved) {
+          const vp = vpRef.current ?? fitViewport()
+          vpRef.current = {
+            ...vp,
+            tx: vp.tx + (e.clientX - drag.lastX),
+            ty: vp.ty + (e.clientY - drag.lastY),
+          }
+          drag.lastX = e.clientX
+          drag.lastY = e.clientY
+          scheduleDraw()
+        }
         return
       }
       if (drag.kind === 'item') {
@@ -325,6 +444,11 @@ const FlatView = forwardRef<FlatViewHandle, Props>(function FlatView(
       const drag = dragRef.current
       dragRef.current = null
       if (drag?.kind === 'item') setActiveUid(null)
+      if (drag?.kind === 'maybe-pick') {
+        // Never moved: it was a click, so it places a point where it started.
+        if (!drag.moved) onPickRef.current([drag.wx, drag.wy])
+        else if (vpRef.current) onViewportRef.current?.(vpRef.current)
+      }
       if (drag?.kind === 'pan' && vpRef.current) onViewportRef.current?.(vpRef.current)
       cv.style.cursor = ''
       if (cv.hasPointerCapture(e.pointerId)) cv.releasePointerCapture(e.pointerId)
@@ -374,6 +498,10 @@ const FlatView = forwardRef<FlatViewHandle, Props>(function FlatView(
         return hitTest(wx, wy)
       },
       count: () => propsRef.current.placed.length,
+      trace: () => ({
+        picks: propsRef.current.picks,
+        rings: propsRef.current.traceRings,
+      }),
       bboxPx: (uid) => {
         const it = propsRef.current.placed.find((p) => p.uid === uid)
         if (!it) return null

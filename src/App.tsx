@@ -225,6 +225,8 @@ export default function App() {
   const [activeUid, setActiveUid] = useState<string | null>(null)
   const [mode, setMode] = useState<'none' | 'calibrate' | 'trace'>('none')
   const [picks, setPicks] = useState<PlanePoint[]>([])
+  /** Completed islands of the trace in progress; picks is the ring being drawn. */
+  const [traceRings, setTraceRings] = useState<PlanePoint[][]>([])
   const [shapeName, setShapeName] = useState('')
   const [distance, setDistance] = useState('')
   const [unit, setUnit] = useState<'mi' | 'km'>('mi')
@@ -315,6 +317,7 @@ export default function App() {
     if (id === activeId) return
     setMode('none')
     setPicks([])
+    setTraceRings([])
     setActiveUid(null)
     setActiveId(id)
   }
@@ -381,12 +384,79 @@ export default function App() {
   }
 
   // --- shapes ------------------------------------------------------------------
+  const startTrace = () => {
+    setMode('trace')
+    setPicks([])
+    setTraceRings([])
+    setShapeName('')
+  }
+
+  const cancelTrace = () => {
+    setMode('none')
+    setPicks([])
+    setTraceRings([])
+    setShapeName('')
+  }
+
+  /** Finish the current outline and start another island. */
+  const newIsland = () => {
+    if (picks.length < 3) return
+    setTraceRings((prev) => [...prev, picks])
+    setPicks([])
+  }
+
+  /** Undo the last point; popping past the start re-opens the last island. */
+  const undoPoint = useCallback(() => {
+    if (picks.length) setPicks(picks.slice(0, -1))
+    else if (traceRings.length) {
+      setPicks(traceRings[traceRings.length - 1])
+      setTraceRings(traceRings.slice(0, -1))
+    }
+  }, [picks, traceRings])
+
+  const moveTracePoint = useCallback((ring: number, i: number, p: PlanePoint) => {
+    if (ring < 0) setPicks((prev) => prev.map((q, j) => (j === i ? p : q)))
+    else
+      setTraceRings((prev) =>
+        prev.map((r, ri) => (ri === ring ? r.map((q, j) => (j === i ? p : q)) : r))
+      )
+  }, [])
+
+  const insertTracePoint = useCallback((ring: number, i: number, p: PlanePoint) => {
+    if (ring < 0) setPicks((prev) => [...prev.slice(0, i), p, ...prev.slice(i)])
+    else
+      setTraceRings((prev) =>
+        prev.map((r, ri) => (ri === ring ? [...r.slice(0, i), p, ...r.slice(i)] : r))
+      )
+  }, [])
+
+  // Ctrl/Cmd-Z undoes the last point, Escape abandons the trace. The name
+  // input keeps its native text undo.
+  useEffect(() => {
+    if (mode !== 'trace') return
+    const h = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'z') {
+        if ((e.target as HTMLElement).tagName === 'INPUT') return
+        e.preventDefault()
+        undoPoint()
+      } else if (e.key === 'Escape') {
+        cancelTrace()
+      }
+    }
+    window.addEventListener('keydown', h)
+    return () => window.removeEventListener('keydown', h)
+  }, [mode, undoPoint])
+
+  const traceReady = traceRings.length > 0 || picks.length >= 3
+
   const saveShape = async () => {
     const name = shapeName.trim()
-    if (picks.length < 3 || !name) return
+    // Stray 1-2 point current rings are ignored rather than blocking the save.
+    const rings = [...traceRings, ...(picks.length >= 3 ? [picks] : [])]
+    if (!rings.length || !name) return
     let shape: CustomShape
     if (onEarth) {
-      const t = shapeFromGeoTrace(picks as LonLat[])
+      const t = shapeFromGeoTrace(rings as LonLat[][])
       shape = {
         id: freshId('shape'),
         name,
@@ -395,7 +465,7 @@ export default function App() {
         tracedOn: 'Earth',
       }
     } else {
-      const t = shapeFromFlatTrace(picks, activeCanvas!.kmPerPixel)
+      const t = shapeFromFlatTrace(rings, activeCanvas!.kmPerPixel)
       shape = {
         id: freshId('shape'),
         name,
@@ -406,9 +476,7 @@ export default function App() {
     }
     await putShape(shape)
     setShapes((prev) => [...prev, shape])
-    setMode('none')
-    setPicks([])
-    setShapeName('')
+    cancelTrace()
   }
 
   const placeShape = (s: CustomShape) => {
@@ -538,7 +606,10 @@ export default function App() {
           setActiveUid={setActiveUid}
           picking={onEarth && mode === 'trace'}
           picks={onEarth && mode === 'trace' ? (picks as LonLat[]) : []}
+          traceRings={onEarth && mode === 'trace' ? (traceRings as LonLat[][]) : []}
           onPick={(p) => setPicks((prev) => [...prev, p])}
+          onTraceMove={moveTracePoint}
+          onTraceInsert={insertTracePoint}
           onViewportChange={(v) =>
             setViewports((prev) => ({ ...prev, [EARTH_ID]: v }))
           }
@@ -555,16 +626,61 @@ export default function App() {
             setActiveUid={setActiveUid}
             picking={mode === 'calibrate' ? picks.length < 2 : mode === 'trace'}
             picks={picks}
+            traceRings={mode === 'trace' ? traceRings : []}
+            traceEditing={mode === 'trace'}
             onPick={(p) =>
               setPicks((prev) =>
                 mode === 'calibrate' && prev.length >= 2 ? prev : [...prev, p]
               )
             }
+            onTraceMove={moveTracePoint}
+            onTraceInsert={insertTracePoint}
             initialViewport={viewports[activeId] as FlatViewport | undefined}
             onViewportChange={(v) =>
               setViewports((prev) => ({ ...prev, [activeId]: v }))
             }
           />
+        </div>
+      )}
+
+      {mode === 'trace' && (
+        <div className="tracebar">
+          <span className="count">
+            {traceRings.length + (picks.length >= 3 ? 1 : 0) > 1 &&
+              `${traceRings.length + (picks.length >= 3 ? 1 : 0)} islands · `}
+            {picks.length} pt{picks.length === 1 ? '' : 's'}
+          </span>
+          <input
+            value={shapeName}
+            placeholder="Name this shape…"
+            onChange={(e) => setShapeName(e.target.value)}
+            onKeyDown={(e) => e.key === 'Enter' && saveShape()}
+          />
+          <button
+            className="primary"
+            disabled={!traceReady || !shapeName.trim()}
+            onClick={saveShape}
+          >
+            Save
+          </button>
+          <button
+            disabled={picks.length < 3}
+            onClick={newIsland}
+            title="Finish this outline and start another island"
+          >
+            ＋ Island
+          </button>
+          <button
+            disabled={!picks.length && !traceRings.length}
+            onClick={undoPoint}
+            title="Undo last point (Ctrl+Z)"
+          >
+            ↩
+          </button>
+          <button onClick={cancelTrace} title="Cancel (Esc)">
+            ✕
+          </button>
+          <small>click to add · drag point to move · click edge to insert · drag map to pan</small>
         </div>
       )}
 
@@ -792,41 +908,10 @@ export default function App() {
           <h2>Shapes</h2>
           {mode !== 'trace' ? (
             <div className="campaign-actions">
-              <button onClick={() => { setMode('trace'); setPicks([]); setShapeName('') }}>
-                ✏️ Trace a shape on this map
-              </button>
+              <button onClick={startTrace}>✏️ Trace a shape on this map</button>
             </div>
           ) : (
-            <div className="calibrate">
-              <p>
-                Click points on the map to outline your shape.{' '}
-                {picks.length < 3
-                  ? `${picks.length} of at least 3.`
-                  : `${picks.length} points — keep clicking, or save.`}
-              </p>
-              {picks.length >= 3 && (
-                <div className="distance">
-                  <input
-                    autoFocus
-                    value={shapeName}
-                    placeholder="Name this shape…"
-                    onChange={(e) => setShapeName(e.target.value)}
-                    onKeyDown={(e) => e.key === 'Enter' && saveShape()}
-                  />
-                </div>
-              )}
-              <div className="campaign-actions">
-                {picks.length >= 3 && (
-                  <button className="primary" onClick={saveShape} disabled={!shapeName.trim()}>
-                    Save shape
-                  </button>
-                )}
-                {picks.length > 0 && (
-                  <button onClick={() => setPicks((prev) => prev.slice(0, -1))}>Undo point</button>
-                )}
-                <button onClick={() => { setMode('none'); setPicks([]) }}>Cancel</button>
-              </div>
-            </div>
+            <p className="hint">Tracing — use the bar at the bottom of the map.</p>
           )}
           {shapes.length > 0 && (
             <ul className="shapelist">

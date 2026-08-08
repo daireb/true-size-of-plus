@@ -136,34 +136,46 @@ export const planeBounds = (rings: PlaneRings) => {
 // --- traced shapes -----------------------------------------------------------
 
 /**
- * Normalise a polygon traced on a flat canvas (image px) into a reusable
- * shape: km units, centred on its own centroid so placement is a translation.
+ * Normalise polygons traced on a flat canvas (image px) into a reusable shape:
+ * km units, centred on the combined centroid so placement is a translation.
+ * Each traced ring becomes its own polygon (an archipelago, not holes), and
+ * winding is normalised per ring — a clockwise island and an anticlockwise one
+ * would otherwise cancel each other out of the centroid.
  */
-export const shapeFromFlatTrace = (pointsPx: PlanePoint[], kmPerPixel: number) => {
-  const km = pointsPx.map(([x, y]) => [x * kmPerPixel, y * kmPerPixel] as PlanePoint)
-  const first = km[0]
-  const last = km[km.length - 1]
-  if (first[0] !== last[0] || first[1] !== last[1]) km.push([first[0], first[1]])
-  const rings: PlaneRings = [[km]]
-  const c = planeCentroid(rings)
-  const centered = transformRings(rings, ([x, y]) => [x - c[0], y - c[1]])
+export const shapeFromFlatTrace = (ringsPx: PlanePoint[][], kmPerPixel: number) => {
+  const polys: PlaneRings = ringsPx.map((ring) => {
+    const km = ring.map(([x, y]) => [x * kmPerPixel, y * kmPerPixel] as PlanePoint)
+    const first = km[0]
+    const last = km[km.length - 1]
+    if (first[0] !== last[0] || first[1] !== last[1]) km.push([first[0], first[1]])
+    if (ringSigned(km) < 0) km.reverse()
+    return [km]
+  })
+  const c = planeCentroid(polys)
+  const centered = transformRings(polys, ([x, y]) => [x - c[0], y - c[1]])
   return { rings: centered, areaKm2: planeAreaKm2(centered) }
 }
 
 /**
- * Normalise a polygon traced on Earth (lon/lat clicks) into a geo shape.
- * A ring traced "the wrong way round" would otherwise be read by d3 as
- * covering the whole sphere except the shape.
+ * Normalise polygons traced on Earth (lon/lat clicks) into a geo shape.
+ * Winding is fixed per ring: one traced "the wrong way round" would otherwise
+ * be read by d3 as covering the whole sphere except the shape.
  */
-export const shapeFromGeoTrace = (points: LonLat[]) => {
-  const ring: Position[] = [...points.map((p) => [p[0], p[1]] as Position)]
-  const first = ring[0]
-  const last = ring[ring.length - 1]
-  if (first[0] !== last[0] || first[1] !== last[1]) ring.push([first[0], first[1]])
-  let geometry: Geometry = { type: 'Polygon', coordinates: [ring] }
-  if (geoArea(geometry) > 2 * Math.PI) {
-    geometry = { type: 'Polygon', coordinates: [[...ring].reverse()] }
-  }
+export const shapeFromGeoTrace = (rings: LonLat[][]) => {
+  const polys = rings.map((points) => {
+    const ring: Position[] = [...points.map((p) => [p[0], p[1]] as Position)]
+    const first = ring[0]
+    const last = ring[ring.length - 1]
+    if (first[0] !== last[0] || first[1] !== last[1]) ring.push([first[0], first[1]])
+    let poly: Position[][] = [ring]
+    if (geoArea({ type: 'Polygon', coordinates: poly }) > 2 * Math.PI)
+      poly = [[...ring].reverse()]
+    return poly
+  })
+  const geometry: Geometry =
+    polys.length === 1
+      ? { type: 'Polygon', coordinates: polys[0] }
+      : { type: 'MultiPolygon', coordinates: polys }
   return {
     geometry,
     centroid: geoCentroid(geometry) as LonLat,
@@ -173,3 +185,64 @@ export const shapeFromGeoTrace = (points: LonLat[]) => {
 
 export const describeKm = (km: number) =>
   `${Math.round(km).toLocaleString()} km / ${Math.round(km / KM_PER_MILE).toLocaleString()} mi`
+
+// --- trace editing -------------------------------------------------------------
+
+export interface TraceHit {
+  kind: 'vertex' | 'edge'
+  /** Ring index; -1 is the ring currently being drawn. */
+  ring: number
+  /** Vertex index to move, or insertion index for an edge hit. */
+  index: number
+}
+
+const distToSegment = (px: number, py: number, a: PlanePoint, b: PlanePoint) => {
+  let [x, y] = a
+  const dx = b[0] - x
+  const dy = b[1] - y
+  if (dx !== 0 || dy !== 0) {
+    const t = Math.max(0, Math.min(1, ((px - x) * dx + (py - y) * dy) / (dx * dx + dy * dy)))
+    x += dx * t
+    y += dy * t
+  }
+  return Math.hypot(px - x, py - y)
+}
+
+/**
+ * Hit-test a pointer against trace rings, all in screen px. Vertices win over
+ * edges so a point can always be grabbed even where segments crowd it.
+ */
+export const hitTracePoint = (
+  rings: { ring: number; pts: PlanePoint[]; closed: boolean }[],
+  sx: number,
+  sy: number,
+  vertexR = 8,
+  edgeR = 6
+): TraceHit | null => {
+  let best: TraceHit | null = null
+  let bestD = vertexR
+  for (const { ring, pts } of rings) {
+    for (let i = 0; i < pts.length; i++) {
+      const d = Math.hypot(pts[i][0] - sx, pts[i][1] - sy)
+      if (d <= bestD) {
+        bestD = d
+        best = { kind: 'vertex', ring, index: i }
+      }
+    }
+  }
+  if (best) return best
+  let bestE = edgeR
+  for (const { ring, pts, closed } of rings) {
+    const n = pts.length
+    if (n < 2) continue
+    const segs = closed ? n : n - 1
+    for (let i = 0; i < segs; i++) {
+      const d = distToSegment(sx, sy, pts[i], pts[(i + 1) % n])
+      if (d <= bestE) {
+        bestE = d
+        best = { kind: 'edge', ring, index: i + 1 }
+      }
+    }
+  }
+  return best
+}

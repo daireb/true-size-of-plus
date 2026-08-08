@@ -186,7 +186,16 @@ decoded images cost 4 bytes/pixel regardless of PNG compression.
 
 ## Traced shapes
 
-"Trace a shape" outlines a polygon on whatever canvas is active. Named shapes
+"Trace a shape" outlines a polygon on whatever canvas is active, with a
+floating toolbar at the bottom of the map. Click to add a point; press-drag
+still pans, so you can navigate mid-trace. Drag a vertex to move it, click an
+edge to insert a point there (and drag it in the same motion), Ctrl/Cmd-Z
+undoes point by point — past the start of an island it re-opens the previous
+one — and Escape abandons the trace. "＋ Island" finishes the current outline
+and starts another, so archipelagos save as one multi-polygon shape whose area
+is the sum of its islands, with winding normalised per ring.
+
+Named shapes
 join a library that works everywhere: trace your kingdom on your campaign map
 and drop it next to France on Earth, or trace a patch of Earth and drop it onto
 your map. Cross-canvas placement goes through the equal-area projection in both

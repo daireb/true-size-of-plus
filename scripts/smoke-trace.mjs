@@ -54,28 +54,82 @@ await page.click('.calibrate button.primary')
 await page.waitForTimeout(300)
 const KPP = (1000 * 1.609344) / 2000 // 0.8047 km/px
 
-// --- trace a 1000x500 image-px rectangle -------------------------------------
+// --- trace with editing: wrong corner fixed by drag, edge insert, islands ---
 console.log('--- trace on the image canvas ---')
 await page.click('.shapes .campaign-actions button') // "Trace a shape"
-check('trace mode entered', await page.isVisible('.shapes .calibrate'))
-// Clicks must land clear of the side panel (viewport x > ~340), so the
-// rectangle sits in the middle of the image: still exactly 1000x500 px.
+check('trace toolbar appears', await page.isVisible('.tracebar'))
+
+// Rectangle corners, with the third deliberately wrong (2200 instead of 2400).
 await clickWorld(1400, 600)
 await clickWorld(2400, 600)
-await clickWorld(2400, 1100)
-await clickWorld(1400, 1100)
-check('picks counted', (await page.textContent('.shapes .calibrate p')).includes('4 points'))
-await page.fill('.shapes .distance input', 'Testlands')
-await page.click('.shapes .calibrate button.primary')
+await clickWorld(2200, 1100)
+check('3 points placed', (await page.textContent('.tracebar .count')).includes('3 pts'))
+
+// Press-drag on empty space must pan the map, not add a point.
+const vpA = await page.evaluate(() => window.__flat.viewport())
+await page.mouse.move(900, 700)
+await page.mouse.down()
+await page.mouse.move(840, 660, { steps: 4 })
+await page.mouse.up()
+const vpB = await page.evaluate(() => window.__flat.viewport())
+const tPan = await page.evaluate(() => window.__flat.trace())
+check('drag pans instead of adding a point',
+  Math.abs(vpB.tx - vpA.tx + 60) < 2 && tPan.picks.length === 3,
+  `dtx ${(vpB.tx - vpA.tx).toFixed(0)}, ${tPan.picks.length} picks`)
+
+// Ctrl+Z removes the last point.
+await clickWorld(1800, 900) // a stray 4th point
+await page.keyboard.press('Control+z')
+await page.waitForTimeout(150)
+check('Ctrl+Z undoes the last point',
+  (await page.evaluate(() => window.__flat.trace())).picks.length === 3)
+
+await clickWorld(1400, 1100) // proper 4th corner
+
+// Fix the wrong corner by dragging the vertex into place.
+const vFrom = await page.evaluate(() => window.__flat.screenFromWorld([2200, 1100]))
+const vTo = await page.evaluate(() => window.__flat.screenFromWorld([2400, 1100]))
+await page.mouse.move(vFrom[0], vFrom[1])
+await page.mouse.down()
+await page.mouse.move(vTo[0], vTo[1], { steps: 5 })
+await page.mouse.up()
+await page.waitForTimeout(150)
+const afterMove = await page.evaluate(() => window.__flat.trace())
+check('vertex dragged into place',
+  Math.abs(afterMove.picks[2][0] - 2400) < 8 && Math.abs(afterMove.picks[2][1] - 1100) < 8,
+  `corner now ${afterMove.picks[2].map(Math.round)}`)
+
+// Click on the top edge inserts a point there (index 1, between its ends).
+const eMid = await page.evaluate(() => window.__flat.screenFromWorld([1900, 600]))
+await page.mouse.click(eMid[0], eMid[1])
+await page.waitForTimeout(150)
+const afterInsert = await page.evaluate(() => window.__flat.trace())
+check('click on an edge inserts a point there',
+  afterInsert.picks.length === 5 && Math.abs(afterInsert.picks[1][0] - 1900) < 8 &&
+    Math.abs(afterInsert.picks[1][1] - 600) < 8,
+  `${afterInsert.picks.length} picks, inserted at ${afterInsert.picks[1].map(Math.round)}`)
+
+// Second island.
+await page.click('.tracebar button[title^="Finish"]')
+check('island committed', (await page.evaluate(() => window.__flat.trace())).rings.length === 1)
+await clickWorld(2600, 1400)
+await clickWorld(3100, 1400)
+await clickWorld(3100, 1700)
+await clickWorld(2600, 1700)
+check('count shows 2 islands', (await page.textContent('.tracebar .count')).includes('2 islands'))
+
+await page.fill('.tracebar input', 'Testlands')
+await page.click('.tracebar button.primary')
 await page.waitForTimeout(400)
 
-const expectedArea = 1000 * KPP * 500 * KPP // 323,764 km²
+// (1000x500 + 500x300) px² at 0.8047 km/px -> 420,922 km².
+const expectedArea = (1000 * 500 + 500 * 300) * KPP * KPP
 const row = (await page.textContent('.shapelist li .meta')).replace(/\s+/g, ' ')
 const gotArea = Number(row.match(/([\d,]+) km²/)?.[1].replace(/,/g, ''))
-check('shape saved with correct area (~323,764 km²)',
-  row.includes('Testlands') && Math.abs(gotArea - expectedArea) / expectedArea < 0.005,
+check('archipelago saved with summed area (~420,900 km²)',
+  row.includes('Testlands') && Math.abs(gotArea - expectedArea) / expectedArea < 0.015,
   `${row} (expected ~${Math.round(expectedArea).toLocaleString()})`)
-check('trace mode exits after save', !(await page.isVisible('.shapes .calibrate')))
+check('trace mode exits after save', !(await page.isVisible('.tracebar')))
 
 // --- place it on the same canvas ----------------------------------------------
 await page.click('.shapelist li button[title="Place Testlands"]')
@@ -83,8 +137,8 @@ await page.waitForTimeout(300)
 console.log('--- place on image canvas ---')
 check('subject added to canvas', await page.evaluate(() => window.__flat.count()) === 1)
 const bbox = await page.evaluate(() => window.__flat.bboxPx(window.__flat.items()[0].uid))
-check('placed at exactly its traced size (1000x500 img px)',
-  Math.abs(bbox.w - 1000) < 2 && Math.abs(bbox.h - 500) < 2, `${bbox.w.toFixed(1)}x${bbox.h.toFixed(1)} px`)
+check('placed at its traced footprint (1700x1100 img px)',
+  Math.abs(bbox.w - 1700) < 12 && Math.abs(bbox.h - 1100) < 12, `${bbox.w.toFixed(1)}x${bbox.h.toFixed(1)} px`)
 check('row shows in placed list', (await page.textContent('.placed li .meta')).includes('Testlands'))
 
 // --- place it on Earth -----------------------------------------------------------
@@ -113,8 +167,8 @@ for (const [lon, lat] of [[-24, 63], [-16, 63], [-16, 66], [-24, 66]]) {
   await page.mouse.click(pt.x, pt.y)
   await page.waitForTimeout(120)
 }
-await page.fill('.shapes .distance input', 'EarthPatch')
-await page.click('.shapes .calibrate button.primary')
+await page.fill('.tracebar input', 'EarthPatch')
+await page.click('.tracebar button.primary')
 await page.waitForTimeout(400)
 const rows = await page.$$eval('.shapelist li .meta', (els) => els.map((e) => e.textContent.replace(/\s+/g, ' ')))
 check('second shape saved from Earth trace', rows.some((r) => r.includes('EarthPatch') && r.includes('traced on Earth')), rows.join(' | '))

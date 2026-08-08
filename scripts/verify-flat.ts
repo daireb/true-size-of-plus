@@ -102,7 +102,7 @@ console.log('\n--- plane helpers ---')
 console.log('\n--- traced shapes ---')
 {
   // Trace a 400x300 px rectangle on a canvas at 0.5 km/px -> 200x150 km.
-  const t = shapeFromFlatTrace([[100, 100], [500, 100], [500, 400], [100, 400]], 0.5)
+  const t = shapeFromFlatTrace([[[100, 100], [500, 100], [500, 400], [100, 400]]], 0.5)
   check('flat trace area', Math.abs(t.areaKm2 - 30000) < 1e-6, `${t.areaKm2} km²`)
   const c = planeCentroid(t.rings)
   check('flat trace centred on origin', Math.abs(c[0]) < 1e-9 && Math.abs(c[1]) < 1e-9, `(${c[0]}, ${c[1]})`)
@@ -112,10 +112,23 @@ console.log('\n--- traced shapes ---')
   const areaOnEarth = trueAreaKm2(onEarth)
   check('flat trace true-sized on the sphere at 60°N', Math.abs(areaOnEarth - 30000) / 30000 < 0.001, `${areaOnEarth.toFixed(1)} km²`)
 
+  // An archipelago: two rectangles, deliberately wound in opposite directions.
+  // 200x100 km + 60x50 km at 0.5 km/px.
+  const arch = shapeFromFlatTrace(
+    [
+      [[0, 0], [400, 0], [400, 200], [0, 200]],
+      [[600, 0], [600, 100], [720, 100], [720, 0]],
+    ],
+    0.5
+  )
+  check('archipelago area is the sum of its islands', Math.abs(arch.areaKm2 - 23000) < 1e-6, `${arch.areaKm2} km²`)
+  check('archipelago is centred on its combined centroid',
+    Math.abs(planeCentroid(arch.rings)[0]) < 1e-9 && Math.abs(planeCentroid(arch.rings)[1]) < 1e-9)
+
   // Trace on Earth: a square-ish patch near Iceland, both windings.
   const pts = [[-20, 64], [-18, 64], [-18, 65], [-20, 65]]
-  const cw = shapeFromGeoTrace([...pts].reverse())
-  const ccw = shapeFromGeoTrace(pts)
+  const cw = shapeFromGeoTrace([[...pts].reverse()])
+  const ccw = shapeFromGeoTrace([pts])
   check('geo trace winding fixed', Math.abs(cw.areaKm2 - ccw.areaKm2) / ccw.areaKm2 < 1e-9,
     `${Math.round(ccw.areaKm2).toLocaleString()} km² both ways`)
   check('geo trace area plausible', ccw.areaKm2 > 9000 && ccw.areaKm2 < 13000, `${Math.round(ccw.areaKm2).toLocaleString()} km²`)
