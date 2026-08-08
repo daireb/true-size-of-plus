@@ -12,7 +12,7 @@ import 'maplibre-gl/dist/maplibre-gl.css'
 
 import { createPlacement, transformGeometry, unwrapGeometry, clamp } from './lib/geo'
 import type { LonLat } from './lib/geo'
-import { planeToGeo, hitTracePoint } from './lib/flat'
+import { planeToGeo, hitTracePoint, pointInRing } from './lib/flat'
 import type { PlanePoint } from './lib/flat'
 import type { EarthPlaced, EarthViewport } from './lib/store'
 
@@ -167,6 +167,8 @@ interface Props {
   onTraceInsert?: (ring: number, index: number, p: LonLat) => void
   /** Double-click on a vertex. */
   onTraceDelete?: (ring: number, index: number) => void
+  /** Drag from inside the outline: translate every vertex of the trace. */
+  onTraceTranslate?: (dLng: number, dLat: number) => void
   /** Called on mouse-down before a vertex drag or edge insert begins. */
   onTraceEditStart?: () => void
   onViewportChange?: (v: EarthViewport) => void
@@ -188,6 +190,7 @@ const EarthView = forwardRef<EarthViewHandle, Props>(function EarthView(
     onTraceMove,
     onTraceInsert,
     onTraceDelete,
+    onTraceTranslate,
     onTraceEditStart,
     onViewportChange,
   },
@@ -218,6 +221,8 @@ const EarthView = forwardRef<EarthViewHandle, Props>(function EarthView(
   onTraceEditStartRef.current = onTraceEditStart
   const onTraceDeleteRef = useRef(onTraceDelete)
   onTraceDeleteRef.current = onTraceDelete
+  const onTraceTranslateRef = useRef(onTraceTranslate)
+  onTraceTranslateRef.current = onTraceTranslate
   const traceStateRef = useRef({ picks, traceRings })
   traceStateRef.current = { picks, traceRings }
   /** Set when a mousedown was consumed by vertex/edge editing, so the click
@@ -476,11 +481,42 @@ const EarthView = forwardRef<EarthViewHandle, Props>(function EarthView(
     }
 
     let editing: { ring: number; index: number } | null = null
+    let sliding: {
+      lastLng: number
+      lastLat: number
+      startX: number
+      startY: number
+      moved: boolean
+    } | null = null
+
+    const insideTrace = (lng: number, lat: number) => {
+      const { picks: pk, traceRings: rings } = traceStateRef.current
+      const pt: PlanePoint = [lng, lat]
+      return (
+        rings.some((r) => pointInRing(pt, r as PlanePoint[])) ||
+        (pk.length >= 3 && pointInRing(pt, pk as PlanePoint[]))
+      )
+    }
 
     const onDown = (e: maplibregl.MapMouseEvent) => {
       if (e.originalEvent.button !== 0) return // right-click is deletion only
       const hit = hitTraceAt(e.point.x, e.point.y)
-      if (!hit) return
+      if (!hit) {
+        // Dragging from inside the outline moves the whole trace; a plain
+        // click there still just adds a point (the click event handles it).
+        if (insideTrace(e.lngLat.lng, e.lngLat.lat)) {
+          sliding = {
+            lastLng: e.lngLat.lng,
+            lastLat: e.lngLat.lat,
+            startX: e.point.x,
+            startY: e.point.y,
+            moved: false,
+          }
+          e.preventDefault()
+          map.dragPan.disable()
+        }
+        return
+      }
       onTraceEditStartRef.current?.()
       if (hit.kind === 'edge')
         onTraceInsertRef.current?.(hit.ring, hit.index, [e.lngLat.lng, e.lngLat.lat])
@@ -490,20 +526,42 @@ const EarthView = forwardRef<EarthViewHandle, Props>(function EarthView(
       map.dragPan.disable()
     }
     const onMove = (e: maplibregl.MapMouseEvent) => {
+      if (sliding) {
+        if (
+          !sliding.moved &&
+          Math.hypot(e.point.x - sliding.startX, e.point.y - sliding.startY) > 4
+        ) {
+          sliding.moved = true
+          suppressClickRef.current = true // this gesture is a slide, not a click
+          onTraceEditStartRef.current?.()
+        }
+        if (sliding.moved) {
+          onTraceTranslateRef.current?.(
+            e.lngLat.lng - sliding.lastLng,
+            e.lngLat.lat - sliding.lastLat
+          )
+          sliding.lastLng = e.lngLat.lng
+          sliding.lastLat = e.lngLat.lat
+        }
+        return
+      }
       if (!editing) {
         const hit = hitTraceAt(e.point.x, e.point.y)
         map.getCanvas().style.cursor = hit
           ? hit.kind === 'vertex'
             ? 'move'
             : 'copy'
-          : 'crosshair'
+          : insideTrace(e.lngLat.lng, e.lngLat.lat)
+            ? 'move'
+            : 'crosshair'
         return
       }
       onTraceMoveRef.current?.(editing.ring, editing.index, [e.lngLat.lng, e.lngLat.lat])
     }
     const onUp = () => {
-      if (!editing) return
+      if (!editing && !sliding) return
       editing = null
+      sliding = null
       map.dragPan.enable()
     }
     // MapLibre only fires 'click' when the pointer didn't drag, so panning

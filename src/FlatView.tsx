@@ -5,7 +5,7 @@ import {
   useImperativeHandle,
   useRef,
 } from 'react'
-import { planeBounds, hitTracePoint } from './lib/flat'
+import { planeBounds, hitTracePoint, pointInRing } from './lib/flat'
 import type { PlanePoint } from './lib/flat'
 import type { FlatPlaced, FlatViewport, ImageCanvasDef } from './lib/store'
 
@@ -42,6 +42,8 @@ interface Props {
   onTraceInsert?: (ring: number, index: number, p: PlanePoint) => void
   /** Double-click on a vertex. */
   onTraceDelete?: (ring: number, index: number) => void
+  /** Drag from inside the outline: translate every vertex of the trace. */
+  onTraceTranslate?: (dx: number, dy: number) => void
   /** Called on pointer-down before a vertex drag or edge insert begins. */
   onTraceEditStart?: () => void
   initialViewport?: FlatViewport
@@ -89,6 +91,7 @@ const FlatView = forwardRef<FlatViewHandle, Props>(function FlatView(
     onTraceMove,
     onTraceInsert,
     onTraceDelete,
+    onTraceTranslate,
     onTraceEditStart,
     initialViewport,
     onViewportChange,
@@ -114,6 +117,16 @@ const FlatView = forwardRef<FlatViewHandle, Props>(function FlatView(
         moved: boolean
       }
     | { kind: 'trace-vertex'; ring: number; index: number }
+    | {
+        kind: 'trace-pan'
+        wx: number
+        wy: number
+        lastWX: number
+        lastWY: number
+        startX: number
+        startY: number
+        moved: boolean
+      }
     | { kind: 'rotate'; uid: string }
     | null
   >(null)
@@ -137,6 +150,8 @@ const FlatView = forwardRef<FlatViewHandle, Props>(function FlatView(
   onTraceEditStartRef.current = onTraceEditStart
   const onTraceDeleteRef = useRef(onTraceDelete)
   onTraceDeleteRef.current = onTraceDelete
+  const onTraceTranslateRef = useRef(onTraceTranslate)
+  onTraceTranslateRef.current = onTraceTranslate
   const onViewportRef = useRef(onViewportChange)
   onViewportRef.current = onViewportChange
 
@@ -400,6 +415,15 @@ const FlatView = forwardRef<FlatViewHandle, Props>(function FlatView(
       )
     }
 
+    /** Is a world point inside any island or the (closable) current ring? */
+    const insideTrace = (wx: number, wy: number) => {
+      const { picks: pk, traceRings: rings } = propsRef.current
+      return (
+        rings.some((r) => pointInRing([wx, wy], r)) ||
+        (pk.length >= 3 && pointInRing([wx, wy], pk))
+      )
+    }
+
     const onDown = (e: PointerEvent) => {
       // Primary button only: right-click is deletion (contextmenu), and must
       // never fall through to add-a-point or start a pan.
@@ -418,6 +442,22 @@ const FlatView = forwardRef<FlatViewHandle, Props>(function FlatView(
             cv.setPointerCapture(e.pointerId)
             return
           }
+        }
+        // Dragging from inside the outline moves the whole trace; a plain
+        // click there still just adds a point.
+        if (propsRef.current.traceEditing && insideTrace(wx, wy)) {
+          dragRef.current = {
+            kind: 'trace-pan',
+            wx,
+            wy,
+            lastWX: wx,
+            lastWY: wy,
+            startX: e.clientX,
+            startY: e.clientY,
+            moved: false,
+          }
+          cv.setPointerCapture(e.pointerId)
+          return
         }
         dragRef.current = {
           kind: 'maybe-pick',
@@ -478,6 +518,7 @@ const FlatView = forwardRef<FlatViewHandle, Props>(function FlatView(
           if (propsRef.current.traceEditing) {
             const hit = hitTraceAt(sx, sy)
             if (hit) cursor = hit.kind === 'vertex' ? 'move' : 'copy'
+            else if (insideTrace(wx, wy)) cursor = 'move'
           }
           cv.style.cursor = cursor
         } else {
@@ -488,6 +529,23 @@ const FlatView = forwardRef<FlatViewHandle, Props>(function FlatView(
               : hitTest(wx, wy)
                 ? 'grab'
                 : ''
+        }
+        return
+      }
+      if (drag.kind === 'trace-pan') {
+        if (
+          !drag.moved &&
+          Math.hypot(e.clientX - drag.startX, e.clientY - drag.startY) > 4
+        ) {
+          drag.moved = true
+          onTraceEditStartRef.current?.() // one undo step for the whole slide
+        }
+        if (drag.moved) {
+          const [sx, sy] = local(e)
+          const [wx, wy] = worldFromScreen(sx, sy)
+          onTraceTranslateRef.current?.(wx - drag.lastWX, wy - drag.lastWY)
+          drag.lastWX = wx
+          drag.lastWY = wy
         }
         return
       }
@@ -559,6 +617,8 @@ const FlatView = forwardRef<FlatViewHandle, Props>(function FlatView(
           onSelectRef.current(propsRef.current.selectedUid === drag.uid ? null : drag.uid)
       }
       if (drag?.kind === 'pan' && !drag.moved) onSelectRef.current(null)
+      if (drag?.kind === 'trace-pan' && !drag.moved)
+        onPickRef.current([drag.wx, drag.wy])
       if (drag?.kind === 'maybe-pick') {
         // Never moved: it was a click, so it places a point where it started.
         if (!drag.moved) onPickRef.current([drag.wx, drag.wy])

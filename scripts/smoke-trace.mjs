@@ -67,9 +67,10 @@ check('3 points placed', (await page.textContent('.tracebar .count')).includes('
 
 // Press-drag on empty space must pan the map, not add a point.
 const vpA = await page.evaluate(() => window.__flat.viewport())
-await page.mouse.move(900, 700)
+// Clear of the trace toolbar, which sits bottom-centre.
+await page.mouse.move(900, 480)
 await page.mouse.down()
-await page.mouse.move(840, 660, { steps: 4 })
+await page.mouse.move(840, 440, { steps: 4 })
 await page.mouse.up()
 const vpB = await page.evaluate(() => window.__flat.viewport())
 const tPan = await page.evaluate(() => window.__flat.trace())
@@ -244,6 +245,19 @@ for (const [lon, lat] of [[-24, 63], [-16, 63], [-16, 66], [-24, 66]]) {
   await page.mouse.click(pt.x, pt.y)
   await page.waitForTimeout(120)
 }
+// Drag from inside the outline slides the whole Earth trace too — the
+// counter staying at 4 pts is the witness that it didn't add a point.
+const inE = await page.evaluate(() => window.__map.project([-20, 64.5]))
+await page.mouse.move(inE.x, inE.y)
+await page.mouse.down()
+await page.mouse.move(inE.x + 40, inE.y + 20, { steps: 4 })
+await page.mouse.up()
+await page.waitForTimeout(200)
+check('drag inside slides the Earth trace without adding a point',
+  (await page.textContent('.tracebar .count')).includes('4 pts'))
+await page.keyboard.press('Control+z') // restore positions for the next checks
+await page.waitForTimeout(200)
+
 // Double-click delete works on Earth too; the toolbar counter is the witness.
 const lastPt = await page.evaluate(() => window.__map.project([-24, 66]))
 await page.mouse.dblclick(lastPt.x, lastPt.y)
@@ -311,8 +325,14 @@ await page.waitForTimeout(400)
 
 // --- edit an existing shape ------------------------------------------------------
 console.log('--- edit shape ---')
+// Editing seeks the shape's home canvas — launch it from Earth to prove it.
+await page.click('.chip') // Earth
+await page.waitForTimeout(800)
 await page.click('button[title="Edit Testlands"]')
-await page.waitForTimeout(300)
+await page.waitForFunction(() => !!window.__flat, null, { timeout: 10000 })
+await page.waitForTimeout(400)
+check('edit jumps to the shape home canvas',
+  await page.evaluate(() => document.querySelector('.chip.active')?.textContent) === 'renamedworld')
 check('editor opens with the shape loaded', await page.isVisible('.tracebar') &&
   (await page.inputValue('.tracebar input')) === 'Testlands')
 check('save button offers Update for an existing name',
@@ -323,6 +343,25 @@ check('both islands load as editable rings, original vertices exact',
   loaded.rings.length === 2 && loaded.picks.length === 0 &&
     loaded.rings[0].length === 5 && hasV(loaded.rings[0], 1400, 600),
   `${loaded.rings.length} rings, ${loaded.rings[0]?.length} pts, corner ${hasV(loaded.rings[0] ?? [], 1400, 600)}`)
+
+// Drag from inside the first island: the whole trace slides as one gesture.
+const inA = await page.evaluate(() => window.__flat.screenFromWorld([1900, 850]))
+const inB = await page.evaluate(() => window.__flat.screenFromWorld([2000, 950]))
+await page.mouse.move(inA[0], inA[1])
+await page.mouse.down()
+await page.mouse.move(inB[0], inB[1], { steps: 5 })
+await page.mouse.up()
+await page.waitForTimeout(150)
+const slid = await page.evaluate(() => window.__flat.trace())
+const near = (ring, x, y) => ring.some((p) => Math.abs(p[0] - x) < 8 && Math.abs(p[1] - y) < 8)
+check('dragging inside moves every island together',
+  near(slid.rings[0], 1500, 700) && near(slid.rings[1], 2700, 1500),
+  `ring0 ${slid.rings[0][0].map(Math.round)}, ring1 ${slid.rings[1][0].map(Math.round)}`)
+await page.keyboard.press('Control+z')
+await page.waitForTimeout(150)
+const slidBack = await page.evaluate(() => window.__flat.trace())
+check('one Ctrl+Z undoes the whole slide',
+  hasV(slidBack.rings[0], 1400, 600) && hasV(slidBack.rings[1], 2600, 1400))
 
 // Move the (1400,600) corner to (1300,550), then Update.
 const eFrom = await page.evaluate(() => window.__flat.screenFromWorld([1400, 600]))

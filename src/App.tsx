@@ -3,7 +3,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { mercatorScale } from './lib/geo'
 import type { LonLat } from './lib/geo'
 import { geoToPlane, planeToGeo, describeKm, KM_PER_MILE, shapeFromFlatTrace, shapeFromGeoTrace, planeCentroid } from './lib/flat'
-import type { PlanePoint } from './lib/flat'
+import type { PlanePoint, PlaneRings } from './lib/flat'
 import { simplifyGeometry } from './lib/geo'
 import { loadCountries, loadRegions, metricsOf, formatArea, searchPlaces } from './lib/places'
 import type { Place } from './lib/places'
@@ -472,6 +472,7 @@ export default function App() {
 
   const addTracePoint = useCallback(
     (p: PlanePoint) => {
+      gestureRef.current = null
       pushTraceHistory()
       setPicks((prev) => [...prev, p])
     },
@@ -507,6 +508,16 @@ export default function App() {
     gestureRef.current = null
     setTraceHistory((prev) => [...prev.slice(-199), g])
   }
+
+  /** Shift every vertex of the trace — all islands and the ring in progress. */
+  const translateTrace = useCallback((dx: number, dy: number) => {
+    commitGesture()
+    setPicks((prev) => prev.map(([x, y]) => [x + dx, y + dy] as PlanePoint))
+    setTraceRings((prev) =>
+      prev.map((r) => r.map(([x, y]) => [x + dx, y + dy] as PlanePoint))
+    )
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   const moveTracePoint = useCallback((ring: number, i: number, p: PlanePoint) => {
     commitGesture()
@@ -581,15 +592,24 @@ export default function App() {
         ? r.slice(0, -1)
         : r
 
+    // Editing happens where the shape lives: its home canvas if that still
+    // exists, otherwise Earth at the origin. Geo shapes carry their location
+    // in their geometry, so Earth is always their home.
+    const homeCanvas =
+      sh.home && sh.home.canvasId !== EARTH_ID
+        ? canvases.find((c) => c.id === sh.home!.canvasId)
+        : null
+    const destId =
+      sh.def.kind === 'geo' || !homeCanvas ? EARTH_ID : homeCanvas.id
+
     let rings: PlanePoint[][]
-    if (onEarth) {
-      const geometry =
+    if (destId === EARTH_ID) {
+      const anchor: LonLat =
         sh.def.kind === 'geo'
-          ? sh.def.geometry
-          : planeToGeo(
-              sh.def.rings,
-              (viewports[EARTH_ID] as EarthViewport | undefined)?.center ?? [0, 20]
-            )
+          ? (sh.home?.target as LonLat) ?? shapeHomeCentroid(sh)!
+          : [0, 0]
+      const geometry =
+        sh.def.kind === 'geo' ? sh.def.geometry : planeToGeo(sh.def.rings, anchor)
       const polys =
         geometry.type === 'Polygon'
           ? [geometry.coordinates]
@@ -597,20 +617,18 @@ export default function App() {
             ? geometry.coordinates
             : []
       rings = polys.map((poly) => open(poly[0] as [number, number][]))
+      earthRef.current?.flyTo(anchor, 4)
     } else {
-      const kpp = activeCanvas!.kmPerPixel
-      const atHome = sh.def.kind === 'flat' && sh.home?.canvasId === activeId
-      const kmRings =
-        sh.def.kind === 'flat'
-          ? sh.def.rings
-          : geoToPlane(sh.def.geometry, shapeHomeCentroid(sh)!)
-      const [ox, oy] = atHome
-        ? sh.home!.target
-        : flatRef.current?.viewCenter() ?? [activeCanvas!.width / 2, activeCanvas!.height / 2]
-      rings = kmRings.map((poly) =>
+      // destId is only a flat canvas when the def is flat; TS can't see that
+      // through the destId indirection, so narrow by hand.
+      const flatRings = (sh.def as { kind: 'flat'; rings: PlaneRings }).rings
+      const kpp = homeCanvas!.kmPerPixel
+      const [ox, oy] = sh.home!.target
+      rings = flatRings.map((poly) =>
         open(poly[0].map(([x, y]) => [x / kpp + ox, y / kpp + oy] as PlanePoint))
       )
     }
+    switchCanvas(destId)
     setMode('trace')
     setPicks([])
     setTraceRings(rings)
@@ -834,6 +852,7 @@ export default function App() {
           onTraceMove={moveTracePoint}
           onTraceInsert={insertTracePoint}
           onTraceDelete={deleteTracePoint}
+          onTraceTranslate={translateTrace}
           onTraceEditStart={beginTraceEdit}
           onViewportChange={(v) =>
             setViewports((prev) => ({ ...prev, [EARTH_ID]: v }))
@@ -863,6 +882,7 @@ export default function App() {
             onTraceMove={moveTracePoint}
             onTraceInsert={insertTracePoint}
             onTraceDelete={deleteTracePoint}
+            onTraceTranslate={translateTrace}
             onTraceEditStart={beginTraceEdit}
             initialViewport={viewports[activeId] as FlatViewport | undefined}
             onViewportChange={(v) =>
@@ -932,7 +952,7 @@ export default function App() {
           </button>
           <small>
             click to add · drag point to move · click edge to insert ·
-            right-click point to delete · drag map to pan
+            right-click point to delete · drag inside to move all · drag map to pan
           </small>
         </div>
       )}

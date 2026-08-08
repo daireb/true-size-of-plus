@@ -246,3 +246,15 @@ export const hitTracePoint = (
   }
   return best
 }
+
+/** Ray-cast point-in-polygon test on one ring (open or closed). */
+export const pointInRing = (pt: PlanePoint, ring: PlanePoint[]): boolean => {
+  let inside = false
+  for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+    const [xi, yi] = ring[i]
+    const [xj, yj] = ring[j]
+    if (yi > pt[1] !== yj > pt[1] && pt[0] < ((xj - xi) * (pt[1] - yi)) / (yj - yi) + xi)
+      inside = !inside
+  }
+  return inside
+}

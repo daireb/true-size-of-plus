@@ -208,9 +208,11 @@ again and it lands there, and the ⟲ button sends it back after wandering. The
 link is deliberately loose — delete that map and the shape survives, it just
 falls back to spawning at the view centre.
 
-The ✎ on a shape row copies it back into the trace editor — on its home canvas
-the original vertices return exactly; elsewhere the outline converts into the
-canvas's space at the view centre. Saving under the same name **updates the
+The ✎ on a shape row copies it back into the trace editor, switching to the
+shape's home canvas so the original vertices return exactly (Earth at the
+origin if its home map no longer exists). Dragging from inside the outline
+slides the whole trace — every island at once, one undo step — while clicking
+inside still just adds a point. Saving under the same name **updates the
 shape in place**: because references point at the shape's id rather than its
 geometry, every placement on every canvas follows automatically, and the
 replaced version sits in the 12-second undo. Saving under a new name forks it
