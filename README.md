@@ -189,11 +189,16 @@ decoded images cost 4 bytes/pixel regardless of PNG compression.
 "Trace a shape" outlines a polygon on whatever canvas is active, with a
 floating toolbar at the bottom of the map. Click to add a point; press-drag
 still pans, so you can navigate mid-trace. Drag a vertex to move it, click an
-edge to insert a point there (and drag it in the same motion), Ctrl/Cmd-Z
+edge to insert a point there (and drag it in the same motion), right-click a
+vertex to delete it (double-click works too; a completed island that drops
+below 3 points is removed with it), Ctrl/Cmd-Z
 undoes any edit — appended points, vertex moves, edge inserts, island commits —
 one step at a time (a whole drag is one step), and Escape abandons the trace. "＋ Island" finishes the current outline
 and starts another, so archipelagos save as one multi-polygon shape whose area
-is the sum of its islands, with winding normalised per ring.
+is the sum of its islands, with winding normalised per ring. Finished islands
+stay fully editable in place — move, insert, delete — which is why there is no
+"active island" concept: a closed ring has no end, so inserting on its closing
+edge already is appending.
 
 Named shapes
 join a library that works everywhere: trace your kingdom on your campaign map

@@ -133,6 +133,8 @@ interface Props {
   onPick: (p: LonLat) => void
   onTraceMove?: (ring: number, index: number, p: LonLat) => void
   onTraceInsert?: (ring: number, index: number, p: LonLat) => void
+  /** Double-click on a vertex. */
+  onTraceDelete?: (ring: number, index: number) => void
   /** Called on mouse-down before a vertex drag or edge insert begins. */
   onTraceEditStart?: () => void
   onViewportChange?: (v: EarthViewport) => void
@@ -150,6 +152,7 @@ const EarthView = forwardRef<EarthViewHandle, Props>(function EarthView(
     onPick,
     onTraceMove,
     onTraceInsert,
+    onTraceDelete,
     onTraceEditStart,
     onViewportChange,
   },
@@ -168,6 +171,8 @@ const EarthView = forwardRef<EarthViewHandle, Props>(function EarthView(
   onTraceInsertRef.current = onTraceInsert
   const onTraceEditStartRef = useRef(onTraceEditStart)
   onTraceEditStartRef.current = onTraceEditStart
+  const onTraceDeleteRef = useRef(onTraceDelete)
+  onTraceDeleteRef.current = onTraceDelete
   const traceStateRef = useRef({ picks, traceRings })
   traceStateRef.current = { picks, traceRings }
   /** Set when a mousedown was consumed by vertex/edge editing, so the click
@@ -378,6 +383,7 @@ const EarthView = forwardRef<EarthViewHandle, Props>(function EarthView(
     let editing: { ring: number; index: number } | null = null
 
     const onDown = (e: maplibregl.MapMouseEvent) => {
+      if (e.originalEvent.button !== 0) return // right-click is deletion only
       const hit = hitTraceAt(e.point.x, e.point.y)
       if (!hit) return
       onTraceEditStartRef.current?.()
@@ -415,16 +421,37 @@ const EarthView = forwardRef<EarthViewHandle, Props>(function EarthView(
       onPickRef.current([e.lngLat.lng, e.lngLat.lat])
     }
 
+    // Right-click (primary) or double-click deletes a vertex; right-click is
+    // safer because missing the handle is a no-op rather than two appends.
+    const deleteAt = (e: maplibregl.MapMouseEvent) => {
+      const hit = hitTraceAt(e.point.x, e.point.y)
+      if (hit?.kind === 'vertex') onTraceDeleteRef.current?.(hit.ring, hit.index)
+    }
+    const onDbl = (e: maplibregl.MapMouseEvent) => {
+      e.preventDefault() // no double-click zoom mid-trace
+      deleteAt(e)
+    }
+    const onContextMenu = (e: maplibregl.MapMouseEvent) => {
+      e.preventDefault()
+      deleteAt(e)
+    }
+
     map.on('mousedown', onDown)
     map.on('mousemove', onMove)
     map.on('mouseup', onUp)
     map.on('click', onClick)
+    map.on('dblclick', onDbl)
+    map.on('contextmenu', onContextMenu)
+    map.doubleClickZoom.disable()
     map.getCanvas().style.cursor = 'crosshair'
     return () => {
       map.off('mousedown', onDown)
       map.off('mousemove', onMove)
       map.off('mouseup', onUp)
       map.off('click', onClick)
+      map.off('dblclick', onDbl)
+      map.off('contextmenu', onContextMenu)
+      map.doubleClickZoom.enable()
       map.dragPan.enable()
       map.getCanvas().style.cursor = ''
     }

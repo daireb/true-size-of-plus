@@ -131,6 +131,30 @@ check('Ctrl+Z undoes an edge insert',
 await page.mouse.click(eMid[0], eMid[1]) // re-insert and carry on
 await page.waitForTimeout(150)
 
+// Double-click deletes a vertex; undo brings it back.
+await page.mouse.dblclick(eMid[0], eMid[1])
+await page.waitForTimeout(150)
+const afterDel = await page.evaluate(() => window.__flat.trace())
+check('double-click deletes a vertex', afterDel.picks.length === 4, `${afterDel.picks.length} picks`)
+await page.keyboard.press('Control+z')
+await page.waitForTimeout(150)
+const restored = await page.evaluate(() => window.__flat.trace())
+check('Ctrl+Z restores a deleted vertex',
+  restored.picks.length === 5 && Math.abs(restored.picks[1][0] - 1900) < 8,
+  `${restored.picks.length} picks, picks[1] = ${restored.picks[1].map(Math.round)}`)
+
+// Right-click deletes too, and missing a vertex with it is a harmless no-op.
+await page.mouse.click(eMid[0] + 60, eMid[1] + 60, { button: 'right' })
+await page.waitForTimeout(150)
+check('right-click off-vertex does nothing',
+  (await page.evaluate(() => window.__flat.trace())).picks.length === 5)
+await page.mouse.click(eMid[0], eMid[1], { button: 'right' })
+await page.waitForTimeout(150)
+check('right-click deletes a vertex',
+  (await page.evaluate(() => window.__flat.trace())).picks.length === 4)
+await page.keyboard.press('Control+z')
+await page.waitForTimeout(150)
+
 // Second island.
 await page.click('.tracebar button[title^="Finish"]')
 check('island committed', (await page.evaluate(() => window.__flat.trace())).rings.length === 1)
@@ -197,6 +221,16 @@ for (const [lon, lat] of [[-24, 63], [-16, 63], [-16, 66], [-24, 66]]) {
   await page.mouse.click(pt.x, pt.y)
   await page.waitForTimeout(120)
 }
+// Double-click delete works on Earth too; the toolbar counter is the witness.
+const lastPt = await page.evaluate(() => window.__map.project([-24, 66]))
+await page.mouse.dblclick(lastPt.x, lastPt.y)
+await page.waitForTimeout(200)
+check('double-click deletes a vertex on Earth',
+  (await page.textContent('.tracebar .count')).includes('3 pts'))
+await page.mouse.click(lastPt.x, lastPt.y)
+await page.waitForTimeout(200)
+check('re-adding the corner works', (await page.textContent('.tracebar .count')).includes('4 pts'))
+
 await page.fill('.tracebar input', 'EarthPatch')
 await page.click('.tracebar button.primary')
 await page.waitForTimeout(400)

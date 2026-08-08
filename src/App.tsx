@@ -469,6 +469,25 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
+  /**
+   * Delete one vertex (double-click). A completed ring that would drop below
+   * 3 points stops being a polygon, so it goes with its last vertex — undo
+   * brings the whole island back.
+   */
+  const deleteTracePoint = useCallback(
+    (ring: number, i: number) => {
+      pushTraceHistory()
+      if (ring < 0) setPicks((prev) => prev.filter((_, j) => j !== i))
+      else
+        setTraceRings((prev) =>
+          prev
+            .map((r, ri) => (ri === ring ? r.filter((_, j) => j !== i) : r))
+            .filter((r) => r.length >= 3)
+        )
+    },
+    [pushTraceHistory]
+  )
+
   const insertTracePoint = useCallback((ring: number, i: number, p: PlanePoint) => {
     commitGesture()
     if (ring < 0) setPicks((prev) => [...prev.slice(0, i), p, ...prev.slice(i)])
@@ -659,6 +678,7 @@ export default function App() {
           onPick={addTracePoint}
           onTraceMove={moveTracePoint}
           onTraceInsert={insertTracePoint}
+          onTraceDelete={deleteTracePoint}
           onTraceEditStart={beginTraceEdit}
           onViewportChange={(v) =>
             setViewports((prev) => ({ ...prev, [EARTH_ID]: v }))
@@ -684,6 +704,7 @@ export default function App() {
             }}
             onTraceMove={moveTracePoint}
             onTraceInsert={insertTracePoint}
+            onTraceDelete={deleteTracePoint}
             onTraceEditStart={beginTraceEdit}
             initialViewport={viewports[activeId] as FlatViewport | undefined}
             onViewportChange={(v) =>
@@ -730,7 +751,10 @@ export default function App() {
           <button onClick={cancelTrace} title="Cancel (Esc)">
             ✕
           </button>
-          <small>click to add · drag point to move · click edge to insert · drag map to pan</small>
+          <small>
+            click to add · drag point to move · click edge to insert ·
+            right-click point to delete · drag map to pan
+          </small>
         </div>
       )}
 

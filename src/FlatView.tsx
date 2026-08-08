@@ -32,6 +32,8 @@ interface Props {
   onPick: (p: PlanePoint) => void
   onTraceMove?: (ring: number, index: number, p: PlanePoint) => void
   onTraceInsert?: (ring: number, index: number, p: PlanePoint) => void
+  /** Double-click on a vertex. */
+  onTraceDelete?: (ring: number, index: number) => void
   /** Called on pointer-down before a vertex drag or edge insert begins. */
   onTraceEditStart?: () => void
   initialViewport?: FlatViewport
@@ -75,6 +77,7 @@ const FlatView = forwardRef<FlatViewHandle, Props>(function FlatView(
     onPick,
     onTraceMove,
     onTraceInsert,
+    onTraceDelete,
     onTraceEditStart,
     initialViewport,
     onViewportChange,
@@ -116,6 +119,8 @@ const FlatView = forwardRef<FlatViewHandle, Props>(function FlatView(
   onTraceInsertRef.current = onTraceInsert
   const onTraceEditStartRef = useRef(onTraceEditStart)
   onTraceEditStartRef.current = onTraceEditStart
+  const onTraceDeleteRef = useRef(onTraceDelete)
+  onTraceDeleteRef.current = onTraceDelete
   const onViewportRef = useRef(onViewportChange)
   onViewportRef.current = onViewportChange
 
@@ -341,6 +346,9 @@ const FlatView = forwardRef<FlatViewHandle, Props>(function FlatView(
     }
 
     const onDown = (e: PointerEvent) => {
+      // Primary button only: right-click is deletion (contextmenu), and must
+      // never fall through to add-a-point or start a pan.
+      if (e.button !== 0) return
       const [sx, sy] = local(e)
       const [wx, wy] = worldFromScreen(sx, sy)
       if (propsRef.current.picking) {
@@ -472,12 +480,40 @@ const FlatView = forwardRef<FlatViewHandle, Props>(function FlatView(
       onViewportRef.current?.(vpRef.current)
     }
 
+    // Right-click (primary) or double-click a vertex to delete it.
+    // Right-click is the safer gesture: missing the vertex is a no-op, where
+    // a missed double-click would append two stray points. Double-click still
+    // works and is safe on a vertex, since a press there is a grab, not an
+    // append.
+    const deleteAt = (e: MouseEvent) => {
+      if (!propsRef.current.picking || !propsRef.current.traceEditing) return false
+      const r = cv.getBoundingClientRect()
+      const hit = hitTraceAt(e.clientX - r.left, e.clientY - r.top)
+      if (hit?.kind === 'vertex') {
+        onTraceDeleteRef.current?.(hit.ring, hit.index)
+        return true
+      }
+      return false
+    }
+    const onDblClick = (e: MouseEvent) => {
+      deleteAt(e)
+    }
+    const onContextMenu = (e: MouseEvent) => {
+      if (!propsRef.current.picking || !propsRef.current.traceEditing) return
+      e.preventDefault() // no browser menu mid-trace, hit or miss
+      deleteAt(e)
+    }
+
+    cv.addEventListener('dblclick', onDblClick)
+    cv.addEventListener('contextmenu', onContextMenu)
     cv.addEventListener('pointerdown', onDown)
     cv.addEventListener('pointermove', onMove)
     cv.addEventListener('pointerup', onUp)
     cv.addEventListener('pointercancel', onUp)
     cv.addEventListener('wheel', onWheel, { passive: false })
     return () => {
+      cv.removeEventListener('dblclick', onDblClick)
+      cv.removeEventListener('contextmenu', onContextMenu)
       cv.removeEventListener('pointerdown', onDown)
       cv.removeEventListener('pointermove', onMove)
       cv.removeEventListener('pointerup', onUp)
