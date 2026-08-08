@@ -4,7 +4,7 @@ import { mercatorScale } from './lib/geo'
 import type { LonLat } from './lib/geo'
 import { geoToPlane, describeKm, KM_PER_MILE, shapeFromFlatTrace, shapeFromGeoTrace } from './lib/flat'
 import type { PlanePoint } from './lib/flat'
-import { simplifyGeometry, countVertices } from './lib/geo'
+import { simplifyGeometry } from './lib/geo'
 import { loadCountries, loadRegions, metricsOf, formatArea, searchPlaces } from './lib/places'
 import type { Place } from './lib/places'
 import {
@@ -209,6 +209,12 @@ export default function App() {
   const fileRef = useRef<HTMLInputElement>(null)
   const importRef = useRef<HTMLInputElement>(null)
   const [dataMsg, setDataMsg] = useState<string | null>(null)
+  /** Persistent selection: expands its row and (next commit) shows the
+   *  on-map rotate handle. Distinct from activeUid, which means "being
+   *  dragged right now, draw it simplified". */
+  const [selectedUid, setSelectedUid] = useState<string | null>(null)
+  const [showSettings, setShowSettings] = useState(false)
+  const [showHelp, setShowHelp] = useState(false)
 
   /**
    * One-slot undo for deletions. Confirmation stops slips; this catches the
@@ -310,6 +316,8 @@ export default function App() {
     setPicks([])
     setTraceRings([])
     setActiveUid(null)
+    setSelectedUid(null)
+    setShowSettings(false)
     setActiveId(id)
   }
 
@@ -629,16 +637,6 @@ export default function App() {
 
   const onEarth = activeId === EARTH_ID
   const earthPlaced = (live[EARTH_ID] ?? []) as EarthPlaced[]
-  const simplifiedNames = onEarth
-    ? earthPlaced
-        .filter((p) => p.src.kind === 'geo' && p.src.simplified)
-        .map((p) =>
-          p.src.kind === 'geo'
-            ? `${p.name} (${countVertices(p.src.homeGeometry).toLocaleString()})`
-            : p.name
-        )
-    : []
-
   // --- render ------------------------------------------------------------------
   return (
     <div className="app">
@@ -759,10 +757,9 @@ export default function App() {
       <aside className="panel">
         <header>
           <h1>True Size Of</h1>
-          <p>
-            Search a country, then drag it across the map. Its real shape and
-            area never change — only projections lie about them.
-          </p>
+          <button className="iconbtn" onClick={() => setShowHelp(true)} title="How this works">
+            ?
+          </button>
         </header>
 
         <div className="canvases">
@@ -773,14 +770,26 @@ export default function App() {
             🌍 Earth
           </button>
           {canvases.map((c) => (
-            <button
-              key={c.id}
-              className={c.id === activeId ? 'chip active' : 'chip'}
-              onClick={() => switchCanvas(c.id)}
-              title={c.name}
-            >
-              {c.name}
-            </button>
+            <span key={c.id} className={c.id === activeId ? 'chipwrap active' : 'chipwrap'}>
+              <button
+                className={c.id === activeId ? 'chip active' : 'chip'}
+                onClick={() => switchCanvas(c.id)}
+                title={c.name}
+              >
+                {c.name}
+              </button>
+              {c.id === activeId && (
+                <button
+                  className="chip gear"
+                  data-testid="map-settings"
+                  title="Map settings"
+                  aria-expanded={showSettings}
+                  onClick={() => setShowSettings((v) => !v)}
+                >
+                  ⚙
+                </button>
+              )}
+            </span>
           ))}
           <button className="chip add" onClick={() => fileRef.current?.click()}>
             ＋ Add map
@@ -799,6 +808,13 @@ export default function App() {
           />
         </div>
 
+        {activeCanvas && (
+          <p className="extent">
+            {describeKm(activeCanvas.width * activeCanvas.kmPerPixel)} ×{' '}
+            {describeKm(activeCanvas.height * activeCanvas.kmPerPixel)}
+          </p>
+        )}
+
         {trash && (
           <p className="undo">
             Deleted “{trash.kind === 'shape' ? trash.shape.name : trash.def.name}”.{' '}
@@ -806,75 +822,76 @@ export default function App() {
           </p>
         )}
 
-        {activeCanvas && (
-          <section className="canvas-info">
-            <div className="campaign-meta">
-              <small>
-                {activeCanvas.width.toLocaleString()} × {activeCanvas.height.toLocaleString()} px
-                · flat, uniform scale
-              </small>
-              <small className="extent">
-                {describeKm(activeCanvas.width * activeCanvas.kmPerPixel)} across ·{' '}
-                {describeKm(activeCanvas.height * activeCanvas.kmPerPixel)} tall
-              </small>
+        {activeCanvas && showSettings && mode !== 'calibrate' && (
+          <section className="card">
+            <small>
+              {activeCanvas.width.toLocaleString()} × {activeCanvas.height.toLocaleString()} px
+              · flat, uniform scale
+            </small>
+            <div className="campaign-actions">
+              <button
+                className="primary"
+                onClick={() => {
+                  setMode('calibrate')
+                  setPicks([])
+                  setShowSettings(false)
+                }}
+              >
+                Set scale
+              </button>
+              <button
+                title="Delete map"
+                onClick={() =>
+                  setConfirm({
+                    title: `Delete map “${activeCanvas.name}”?`,
+                    body: 'Everything placed on it and its saved session go with it. You can undo for 12 seconds.',
+                    action: () => deleteCanvas(activeCanvas.id),
+                  })
+                }
+              >
+                Delete map
+              </button>
             </div>
-            {mode !== 'calibrate' ? (
-              <div className="campaign-actions">
-                <button className="primary" onClick={() => { setMode('calibrate'); setPicks([]) }}>
-                  Set scale
-                </button>
-                <button
-                  title="Delete map"
-                  onClick={() =>
-                    setConfirm({
-                      title: `Delete map “${activeCanvas.name}”?`,
-                      body: 'Everything placed on it and its saved session go with it. You can undo for 12 seconds.',
-                      action: () => deleteCanvas(activeCanvas.id),
-                    })
-                  }
-                >
-                  Delete
-                </button>
-              </div>
+          </section>
+        )}
+
+        {activeCanvas && mode === 'calibrate' && (
+          <section className="card calibrate">
+            {picks.length < 2 ? (
+              <p>
+                Click <strong>two points</strong> on your map — along its scale
+                bar, or corner to corner if you know the width.
+                {picks.length === 1 && ' Now the second point.'}
+              </p>
             ) : (
-              <div className="calibrate">
-                {picks.length < 2 ? (
-                  <p>
-                    Click <strong>two points</strong> on your map — along its
-                    scale bar, or corner to corner if you know the width.
-                    {picks.length === 1 && ' Now the second point.'}
-                  </p>
-                ) : (
-                  <>
-                    <p>How far apart are those two points?</p>
-                    <div className="distance">
-                      <input
-                        autoFocus
-                        type="number"
-                        min="0"
-                        step="any"
-                        value={distance}
-                        placeholder="e.g. 100"
-                        onChange={(e) => setDistance(e.target.value)}
-                        onKeyDown={(e) => e.key === 'Enter' && applyScale()}
-                      />
-                      <select value={unit} onChange={(e) => setUnit(e.target.value as 'mi' | 'km')}>
-                        <option value="mi">miles</option>
-                        <option value="km">km</option>
-                      </select>
-                    </div>
-                  </>
-                )}
-                <div className="campaign-actions">
-                  {picks.length >= 2 && (
-                    <button className="primary" onClick={applyScale}>
-                      Apply
-                    </button>
-                  )}
-                  <button onClick={() => { setMode('none'); setPicks([]) }}>Cancel</button>
+              <>
+                <p>How far apart are those two points?</p>
+                <div className="distance">
+                  <input
+                    autoFocus
+                    type="number"
+                    min="0"
+                    step="any"
+                    value={distance}
+                    placeholder="e.g. 100"
+                    onChange={(e) => setDistance(e.target.value)}
+                    onKeyDown={(e) => e.key === 'Enter' && applyScale()}
+                  />
+                  <select value={unit} onChange={(e) => setUnit(e.target.value as 'mi' | 'km')}>
+                    <option value="mi">miles</option>
+                    <option value="km">km</option>
+                  </select>
                 </div>
-              </div>
+              </>
             )}
+            <div className="campaign-actions">
+              {picks.length >= 2 && (
+                <button className="primary" onClick={applyScale}>
+                  Apply
+                </button>
+              )}
+              <button onClick={() => { setMode('none'); setPicks([]) }}>Cancel</button>
+            </div>
           </section>
         )}
 
@@ -909,6 +926,12 @@ export default function App() {
 
         {error && <p className="error">{error}</p>}
 
+        {placed.length > 0 && (
+          <h2 className="sechead">
+            On this map <span className="badge">{placed.length}</span>
+          </h2>
+        )}
+
         <ul className="placed">
           {placed.map((p) => {
             const geoSrc = onEarth && (p as EarthPlaced).src.kind === 'geo'
@@ -919,55 +942,70 @@ export default function App() {
               ? (mercatorScale(p.target[1]) / mercatorScale(home[1])) ** 2
               : 1
             const moved = home ? Math.abs(ratio - 1) > 0.005 : false
+            const open = p.uid === selectedUid
             return (
-              <li key={p.uid}>
-                <div className="row">
+              <li key={p.uid} className={open ? 'open' : undefined}>
+                <div
+                  className="row"
+                  onClick={() => setSelectedUid(open ? null : p.uid)}
+                  title={open ? 'Collapse' : 'Select and edit'}
+                >
                   <span className="swatch" style={{ background: p.color }} />
-                  <div className="meta">
+                  <span className="meta">
                     <strong>{p.name}</strong>
-                    <small>
-                      {formatArea(p.areaKm2)} · true area
-                      {p.parent ? ` · ${p.parent}` : ''}
-                    </small>
+                    <small>{formatArea(p.areaKm2)}</small>
+                  </span>
+                  {p.bearing !== 0 && <small className="ang">{p.bearing}°</small>}
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      if (selectedUid === p.uid) setSelectedUid(null)
+                      removePlaced(p.uid)
+                    }}
+                    title="Remove"
+                  >
+                    ×
+                  </button>
+                </div>
+                {open && (
+                  <div className="detail">
+                    {p.parent && <small>{p.parent}</small>}
                     {moved && (
                       <small className={ratio > 1 ? 'up' : 'down'}>
                         drawn {ratio.toFixed(2)}× its home size
                       </small>
                     )}
+                    <div className="rotate">
+                      <input
+                        type="range"
+                        min={-180}
+                        max={180}
+                        step={1}
+                        value={p.bearing}
+                        aria-label={`Rotate ${p.name}`}
+                        onPointerDown={() => setActiveUid(p.uid)}
+                        onPointerUp={() => setActiveUid(null)}
+                        onBlur={() => setActiveUid(null)}
+                        onChange={(e) => updatePlaced(p.uid, { bearing: Number(e.target.value) })}
+                      />
+                      <button
+                        className="deg"
+                        onClick={() => updatePlaced(p.uid, { bearing: 0 })}
+                        title="Reset rotation"
+                      >
+                        {p.bearing}°
+                      </button>
+                    </div>
+                    {home && (
+                      <button
+                        className="wide"
+                        onClick={() => updatePlaced(p.uid, { target: home, bearing: 0 })}
+                      >
+                        Send home
+                      </button>
+                    )}
                   </div>
-                  {home && (
-                    <button
-                      onClick={() => updatePlaced(p.uid, { target: home, bearing: 0 })}
-                      title="Send home"
-                    >
-                      ⟲
-                    </button>
-                  )}
-                  <button onClick={() => removePlaced(p.uid)} title="Remove">
-                    ×
-                  </button>
-                </div>
-                <div className="rotate">
-                  <input
-                    type="range"
-                    min={-180}
-                    max={180}
-                    step={1}
-                    value={p.bearing}
-                    aria-label={`Rotate ${p.name}`}
-                    onPointerDown={() => setActiveUid(p.uid)}
-                    onPointerUp={() => setActiveUid(null)}
-                    onBlur={() => setActiveUid(null)}
-                    onChange={(e) => updatePlaced(p.uid, { bearing: Number(e.target.value) })}
-                  />
-                  <button
-                    className="deg"
-                    onClick={() => updatePlaced(p.uid, { bearing: 0 })}
-                    title="Reset rotation"
-                  >
-                    {p.bearing}°
-                  </button>
-                </div>
+                )}
               </li>
             )
           })}
@@ -976,89 +1014,130 @@ export default function App() {
         {placed.length === 0 && (
           <p className="hint">
             {onEarth
-              ? 'Try Greenland — then drag it down to the equator. Regions work too: Florida, Scotland, Hokkaido.'
-              : 'Search for a country or region to drop it onto your map at true size.'}
+              ? 'Drag a country across the map and watch Mercator inflate it — try Greenland, then pull it down to the equator. Regions work too: Florida, Scotland, Hokkaido.'
+              : 'Everything you drop here is drawn at its true size, wherever you put it. Search for a country or region to start.'}
           </p>
         )}
 
-        <section className="shapes">
-          <h2>Shapes</h2>
+        <h2 className="sechead">
+          Shapes
           {mode !== 'trace' ? (
-            <div className="campaign-actions">
-              <button onClick={startTrace}>✏️ Trace a shape on this map</button>
-            </div>
+            <button
+              className="iconbtn"
+              data-testid="trace-start"
+              onClick={startTrace}
+              title="Trace a new shape on this map"
+            >
+              ✏️＋
+            </button>
           ) : (
-            <p className="hint">Tracing — use the bar at the bottom of the map.</p>
+            <span className="badge">tracing…</span>
           )}
-          {shapes.length > 0 && (
-            <ul className="shapelist">
-              {shapes.map((sh) => (
-                <li key={sh.id}>
-                  <div className="meta">
+        </h2>
+
+        {shapes.length === 0 ? (
+          <p className="hint">
+            Trace an outline on any map and it can be dropped on any other — your
+            kingdom next to France, or Florida onto your world.
+          </p>
+        ) : (
+          <ul className="shapelist">
+            {shapes.map((sh) => (
+              <li key={sh.id}>
+                <button
+                  className="shaperow"
+                  title={`Place ${sh.name}`}
+                  onClick={() => placeShape(sh)}
+                >
+                  <span className="meta">
                     <strong>{sh.name}</strong>
                     <small>
                       {formatArea(sh.areaKm2)}
-                      {sh.tracedOn ? ` · traced on ${sh.tracedOn}` : ''}
+                      {sh.tracedOn && sh.tracedOn !== (activeCanvas?.name ?? 'Earth')
+                        ? ` · from ${sh.tracedOn}`
+                        : ''}
                     </small>
-                  </div>
-                  <button onClick={() => placeShape(sh)} title={`Place ${sh.name}`}>
-                    ＋
-                  </button>
-                  <button
-                    title={`Delete ${sh.name}`}
-                    onClick={() =>
-                      setConfirm({
-                        title: `Delete “${sh.name}”?`,
-                        body: 'Its placements on every canvas go with it. You can undo for 12 seconds.',
-                        action: () => deleteShape(sh.id),
-                      })
-                    }
-                  >
-                    ×
-                  </button>
-                </li>
-              ))}
-            </ul>
-          )}
-        </section>
-
-        <section className="shapes data">
-          <h2>Save / load</h2>
-          <div className="campaign-actions">
-            <button onClick={doExport} title="Export everything to a file">
-              ⬇ Export file
-            </button>
-            <button onClick={() => importRef.current?.click()} title="Import a snapshot file">
-              ⬆ Import file
-            </button>
-            <input
-              ref={importRef}
-              data-testid="import-file"
-              type="file"
-              accept="application/json,.json"
-              hidden
-              onChange={(e) => {
-                const f = e.target.files?.[0]
-                if (f) doImport(f)
-                e.target.value = ''
-              }}
-            />
-          </div>
-          {dataMsg && <p className="hint">{dataMsg}</p>}
-          <p className="hint">
-            Everything — maps, shapes, placements — in one JSON file. No
-            account, nothing uploaded.
-          </p>
-        </section>
-
-        {simplifiedNames.length > 0 && (
-          <p className="hint">
-            Outlines over {DRAG_BUDGET.toLocaleString()} points are simplified
-            while you move them, then redrawn at full detail.{' '}
-            {simplifiedNames.join(', ')}
-          </p>
+                  </span>
+                  <span className="plus">＋</span>
+                </button>
+                <button
+                  className="del"
+                  title={`Delete ${sh.name}`}
+                  onClick={() =>
+                    setConfirm({
+                      title: `Delete “${sh.name}”?`,
+                      body: 'Its placements on every canvas go with it. You can undo for 12 seconds.',
+                      action: () => deleteShape(sh.id),
+                    })
+                  }
+                >
+                  ×
+                </button>
+              </li>
+            ))}
+          </ul>
         )}
+
+        {dataMsg && <p className="hint">{dataMsg}</p>}
+
+        <footer className="panelfoot">
+          <button onClick={doExport} title="Export everything to a file">
+            ⬇ Export
+          </button>
+          <button onClick={() => importRef.current?.click()} title="Import a snapshot file">
+            ⬆ Import
+          </button>
+          <input
+            ref={importRef}
+            data-testid="import-file"
+            type="file"
+            accept="application/json,.json"
+            hidden
+            onChange={(e) => {
+              const f = e.target.files?.[0]
+              if (f) doImport(f)
+              e.target.value = ''
+            }}
+          />
+        </footer>
       </aside>
+
+      {showHelp && (
+        <div className="modal-overlay" onClick={() => setShowHelp(false)}>
+          <div className="modal help" onClick={(e) => e.stopPropagation()}>
+            <strong>How this works</strong>
+            <p>
+              A <b>map</b> is the frame you compare things inside. Earth is drawn
+              in Web Mercator, so anything you drag around it swells and shrinks —
+              that is the lie the projection tells. A map you upload is flat and
+              evenly scaled, so everything on it is drawn at its true size no
+              matter where you put it.
+            </p>
+            <p>
+              <b>Shapes</b> are outlines you trace yourself. They carry their real
+              area with them, so one traced on your world can be dropped on Earth
+              and compared against a real country, and the reverse.
+            </p>
+            <p>
+              <b>Tracing:</b> click to add a point, drag a point to move it, click
+              an edge to insert one, right-click a point to delete it. Ctrl/Cmd-Z
+              undoes any of that, Escape abandons the trace, and “＋ Island” starts
+              a separate outline for archipelagos.
+            </p>
+            <p>
+              Outlines above {DRAG_BUDGET.toLocaleString()} points are simplified
+              while you drag them and redrawn in full when you let go.
+            </p>
+            <p>
+              Nothing is uploaded anywhere. Maps and shapes live in this browser;
+              Export writes the lot to one JSON file you can keep or reimport.
+            </p>
+            <div className="campaign-actions">
+              <button autoFocus onClick={() => setShowHelp(false)}>Close</button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

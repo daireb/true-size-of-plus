@@ -251,66 +251,23 @@ body {
 }
 
 /* --- campaign map --- */
-.campaign {
-  margin-top: 16px;
-  padding-top: 14px;
-  border-top: 1px solid var(--line);
-}
 
-.campaign h2 {
-  margin: 0 0 9px;
-  font-size: 12px;
-  font-weight: 600;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-  color: var(--muted);
-}
 
-.drop {
-  display: flex;
-  flex-direction: column;
-  gap: 3px;
-  align-items: center;
-  padding: 16px 12px;
-  text-align: center;
-  border: 1px dashed var(--line);
-  border-radius: 9px;
-  cursor: pointer;
-}
 
-.drop:hover,
-.drop.over {
-  border-color: var(--accent);
-  background: rgba(110, 168, 254, 0.08);
-}
 
-.drop strong {
-  font-size: 13px;
-}
 
-.drop small,
-.campaign-meta small {
-  font-size: 11px;
-  color: var(--muted);
-}
 
-.campaign-meta {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  min-width: 0;
-}
 
-.campaign-meta strong {
-  font-size: 13px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
 
-.campaign-meta .extent {
-  color: var(--accent);
-}
+
+
+
+
+
+
+
+
+
 
 .campaign-actions {
   display: flex;
@@ -384,25 +341,11 @@ body {
   border-color: var(--accent);
 }
 
-.opacity {
-  display: flex;
-  align-items: center;
-  gap: 9px;
-  margin-top: 11px;
-}
 
-.opacity span {
-  font-size: 11px;
-  color: var(--muted);
-}
 
-.opacity input {
-  flex: 1;
-  min-width: 0;
-  height: 3px;
-  accent-color: var(--accent);
-  cursor: pointer;
-}
+
+
+
 
 /* --- views + canvas selector --- */
 .view {
@@ -458,29 +401,12 @@ body {
   border-style: dashed;
 }
 
-.canvas-info {
-  margin-bottom: 12px;
-  padding: 10px;
-  background: var(--panel-soft);
-  border: 1px solid var(--line);
-  border-radius: 9px;
-}
+
 
 /* --- shapes --- */
-.shapes {
-  margin-top: 16px;
-  padding-top: 12px;
-  border-top: 1px solid var(--line);
-}
 
-.shapes h2 {
-  margin: 0 0 9px;
-  font-size: 12px;
-  font-weight: 600;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-  color: var(--muted);
-}
+
+
 
 .shapelist {
   margin: 10px 0 0;
@@ -496,7 +422,7 @@ body {
   border-top: 1px solid var(--line);
 }
 
-.shapelist button {
+.shapelist .del {
   flex: none;
   width: 24px;
   height: 24px;
@@ -508,7 +434,7 @@ body {
   cursor: pointer;
 }
 
-.shapelist button:hover {
+.shapelist .del:hover {
   color: var(--text);
   border-color: var(--accent);
 }
@@ -662,4 +588,275 @@ button.danger {
 .modal .campaign-actions {
   justify-content: flex-end;
   margin-top: 0;
+}
+
+/* ── compact panel ───────────────────────────────────────────────── */
+.panel header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.panel h1 {
+  flex: 1;
+  margin: 0;
+}
+
+.iconbtn {
+  flex: none;
+  padding: 3px 8px;
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--muted);
+  background: var(--panel-soft);
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  cursor: pointer;
+}
+
+.iconbtn:hover {
+  color: var(--text);
+  border-color: var(--accent);
+}
+
+/* Chip + its gear read as one control. */
+.chipwrap {
+  display: inline-flex;
+}
+
+.chipwrap .chip {
+  border-top-right-radius: 0;
+  border-bottom-right-radius: 0;
+}
+
+.chip.gear {
+  padding: 5px 8px;
+  border-left: 0;
+  border-top-left-radius: 0;
+  border-bottom-left-radius: 0;
+}
+
+.chipwrap.active .chip.gear {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #0d1117;
+}
+
+.chip.gear[aria-expanded='true'] {
+  background: var(--panel-soft) !important;
+  border-color: var(--accent) !important;
+  color: var(--accent) !important;
+}
+
+p.extent {
+  margin: -4px 0 12px;
+  font-size: 11px;
+  color: var(--accent);
+}
+
+.card {
+  margin-bottom: 12px;
+  padding: 10px;
+  background: var(--panel-soft);
+  border: 1px solid var(--line);
+  border-radius: 9px;
+}
+
+.card > small {
+  display: block;
+  margin-bottom: 8px;
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.card .campaign-actions {
+  margin-top: 0;
+}
+
+.sechead {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 16px 0 6px;
+  padding-top: 12px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--muted);
+  border-top: 1px solid var(--line);
+}
+
+.sechead .badge {
+  margin-left: auto;
+  font-size: 10.5px;
+  letter-spacing: 0;
+  text-transform: none;
+  color: var(--muted);
+}
+
+.sechead .iconbtn {
+  margin-left: auto;
+}
+
+/* One line per placed subject; details unfold on selection. */
+.placed li {
+  padding: 0;
+}
+
+.placed li .row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 0;
+  cursor: pointer;
+}
+
+.placed li.open .row strong {
+  color: var(--accent);
+}
+
+.placed .meta {
+  display: flex;
+  flex: 1;
+  flex-direction: row;
+  align-items: baseline;
+  gap: 7px;
+  min-width: 0;
+}
+
+.placed .meta strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.placed .meta small {
+  flex: none;
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.placed .ang {
+  flex: none;
+  font-size: 10.5px;
+  color: var(--accent);
+  font-variant-numeric: tabular-nums;
+}
+
+.placed .detail {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 2px 0 10px 21px;
+}
+
+.placed .detail small {
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.placed .detail button.wide {
+  width: auto !important;
+  height: auto !important;
+  padding: 5px 10px;
+  font-size: 12px !important;
+  align-self: flex-start;
+}
+
+.rotate {
+  margin: 0;
+}
+
+/* Whole shape row places it; × deletes. */
+.shaperow {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  padding: 6px 8px;
+  color: var(--text);
+  text-align: left;
+  background: none;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  cursor: pointer;
+}
+
+.shaperow:hover {
+  background: rgba(110, 168, 254, 0.1);
+  border-color: rgba(110, 168, 254, 0.35);
+}
+
+.shaperow .meta {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  flex: 1;
+  min-width: 0;
+}
+
+.shaperow .meta strong {
+  font-size: 13px;
+}
+
+.shaperow .meta small {
+  font-size: 10.5px;
+  color: var(--muted);
+}
+
+.shaperow .plus {
+  flex: none;
+  color: var(--muted);
+}
+
+.shaperow:hover .plus {
+  color: var(--accent);
+}
+
+.shapelist li {
+  gap: 4px;
+  padding: 1px 0;
+  border-top: 0;
+}
+
+.panelfoot {
+  display: flex;
+  gap: 6px;
+  margin-top: 16px;
+  padding-top: 12px;
+  border-top: 1px solid var(--line);
+}
+
+.panelfoot button {
+  flex: 1;
+  padding: 6px 8px;
+  font-size: 11.5px;
+  color: var(--muted);
+  background: var(--panel-soft);
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  cursor: pointer;
+}
+
+.panelfoot button:hover {
+  color: var(--text);
+  border-color: var(--accent);
+}
+
+.modal.help {
+  width: min(90vw, 480px);
+  max-height: 80vh;
+  overflow-y: auto;
+}
+
+.modal.help p {
+  margin: 0 0 10px;
+}
+
+.modal.help b {
+  color: var(--text);
+  font-weight: 600;
 }

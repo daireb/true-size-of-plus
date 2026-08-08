@@ -70,7 +70,7 @@ await page.waitForTimeout(400)
 
 console.log('--- calibration ---')
 const extent = (await page.textContent('.extent')).replace(/\s+/g, ' ').trim()
-check('4000px map at 1000mi/2000px reads 2,000 mi across', extent.includes('2,000 mi across'), extent)
+check('4000px map at 1000mi/2000px reads 2,000 mi wide', extent.includes('2,000 mi ×'), extent)
 
 // --- place Ireland at true size ---------------------------------------------
 await page.fill('.search input', 'Ireland')
@@ -109,6 +109,8 @@ check('drag moves the subject', Math.abs(after[0] - before[0] - 120 / zoom) < 3 
   `moved ${(after[0] - before[0]).toFixed(1)} img px (expected ~${(120 / zoom).toFixed(1)})`)
 
 // --- rotate -------------------------------------------------------------------
+await page.click('.placed li .row') // expand the row to reach the slider
+await page.waitForTimeout(150)
 await page.evaluate(() => {
   const s = document.querySelector('.rotate input')
   const set = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set
@@ -145,7 +147,7 @@ console.log('--- persistence ---')
 check('image canvas is still the active one after reload',
   await page.evaluate(() => document.querySelector('.chip.active')?.textContent) === 'testworld')
 check('calibration survives reload',
-  ((await page.textContent('.extent')) ?? '').includes('2,000 mi across'))
+  ((await page.textContent('.extent')) ?? '').includes('2,000 mi ×'))
 const restored = await page.evaluate(() => window.__flat.items())
 check('subject restored with position and bearing', restored.length === 1 && restored[0].bearing === 55 &&
   Math.abs(restored[0].target[0] - after[0]) < 1,
@@ -163,17 +165,19 @@ check('Earth becomes visible', await page.evaluate(() => {
 }))
 check('Earth session is separate (no Ireland here)',
   await page.evaluate(() => document.querySelectorAll('.placed li').length) === 0)
-await page.click('.chip:nth-child(2)')
+await page.click('.chipwrap .chip')
 await page.waitForTimeout(600)
 check('back on the image canvas, subject still there',
   await page.evaluate(() => window.__flat?.count()) === 1)
 
 // --- delete: confirmation dialog -----------------------------------------------
-await page.click('.canvas-info button[title="Delete map"]')
+await page.click('[data-testid=map-settings]')
+await page.waitForTimeout(150)
+await page.click('button[title="Delete map"]')
 await page.waitForTimeout(200)
 check('delete asks for confirmation naming the map',
   await page.isVisible('.modal') && (await page.textContent('.modal')).includes('testworld') &&
-    (await page.$$eval('.chip', (els) => els.length)) === 3)
+    (await page.$$eval('.chipwrap', (els) => els.length)) === 1)
 await page.click('.modal button.danger')
 await page.waitForTimeout(600)
 check('deleting the canvas falls back to Earth',

@@ -36,7 +36,9 @@ await page.waitForTimeout(1500)
 await page.screenshot({ path: 'scripts/out-upright.png' })
 console.log('upright test:', await page.evaluate(() => document.querySelector('.placed li .meta')?.innerText.replace(/\n/g, ' | ')))
 
-// 2. Rotation control.
+// 2. Rotation control (slider lives in the expanded row now).
+await page.click('.placed li .row')
+await page.waitForTimeout(200)
 await page.evaluate(() => {
   const s = document.querySelector('.rotate input')
   const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set

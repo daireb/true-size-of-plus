@@ -56,7 +56,7 @@ await a.click('.calibrate button.primary')
 await a.waitForTimeout(300)
 
 // Trace a shape and place it; also place Ireland.
-await a.click('.shapes .campaign-actions button')
+await a.click('[data-testid=trace-start]')
 await clickWorld(a, 1200, 600)
 await clickWorld(a, 2000, 600)
 await clickWorld(a, 2000, 1200)
@@ -73,7 +73,7 @@ check('profile A has 2 subjects placed', await a.evaluate(() => window.__flat.co
 // Export.
 const [download] = await Promise.all([
   a.waitForEvent('download'),
-  a.click('.data button[title="Export everything to a file"]'),
+  a.click('.panelfoot button[title="Export everything to a file"]'),
 ])
 // The temp download vanishes when its context closes — copy it out first.
 const file = 'scripts/out-snapshot.json'
@@ -113,7 +113,7 @@ await b.evaluate(() => {
 })
 await b.waitForFunction(() => !!window.__flat, null, { timeout: 10000 })
 await b.waitForTimeout(1500)
-check('calibration imported', ((await b.textContent('.extent')) ?? '').includes('1,200 km / 746 mi across'),
+check('calibration imported', ((await b.textContent('.extent')) ?? '').includes('1,200 km / 746 mi ×'),
   (await b.textContent('.extent')).replace(/\s+/g, ' '))
 check('shape library imported',
   (await b.textContent('.shapelist li .meta')).includes('Snapshotia'))

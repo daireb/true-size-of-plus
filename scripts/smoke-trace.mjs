@@ -56,7 +56,7 @@ const KPP = (1000 * 1.609344) / 2000 // 0.8047 km/px
 
 // --- trace with editing: wrong corner fixed by drag, edge insert, islands ---
 console.log('--- trace on the image canvas ---')
-await page.click('.shapes .campaign-actions button') // "Trace a shape"
+await page.click('[data-testid=trace-start]') // start tracing
 check('trace toolbar appears', await page.isVisible('.tracebar'))
 
 // Rectangle corners, with the third deliberately wrong (2200 instead of 2400).
@@ -213,7 +213,7 @@ console.log('--- trace on Earth ---')
 // Pin the camera so the trace points project on-screen and clear of the panel.
 await page.evaluate(() => window.__map.jumpTo({ center: [-14, 64.5], zoom: 4 }))
 await page.waitForTimeout(600)
-await page.click('.shapes .campaign-actions button')
+await page.click('[data-testid=trace-start]')
 await page.waitForTimeout(300)
 // A patch over the north Atlantic, ~roughly Iceland-sized.
 for (const [lon, lat] of [[-24, 63], [-16, 63], [-16, 66], [-24, 66]]) {
@@ -235,7 +235,8 @@ await page.fill('.tracebar input', 'EarthPatch')
 await page.click('.tracebar button.primary')
 await page.waitForTimeout(400)
 const rows = await page.$$eval('.shapelist li .meta', (els) => els.map((e) => e.textContent.replace(/\s+/g, ' ')))
-check('second shape saved from Earth trace', rows.some((r) => r.includes('EarthPatch') && r.includes('traced on Earth')), rows.join(' | '))
+check('second shape saved from Earth trace', rows.some((r) => r.includes('EarthPatch')), rows.join(' | '))
+check('provenance hidden on its own canvas', !rows.some((r) => r.includes('from Earth')), rows.join(' | '))
 // ~8° lon x 3° lat at 64.5N: ≈ 385 km x 334 km ≈ 128,000 km²
 const patchArea = await page.evaluate(() => {
   const el = [...document.querySelectorAll('.shapelist li .meta')].find((e) => e.textContent.includes('EarthPatch'))
@@ -244,9 +245,11 @@ const patchArea = await page.evaluate(() => {
 check('Earth trace area plausible (~128k km²)', /1[12][0-9],\d{3} km²/.test(patchArea), patchArea.replace(/\s+/g, ' '))
 
 // --- place the Earth trace on the image canvas ------------------------------------
-await page.click('.chip:nth-child(2)')
+await page.click('.chipwrap .chip')
 await page.waitForFunction(() => !!window.__flat, null, { timeout: 10000 })
 await page.waitForTimeout(600)
+check('provenance shows where it differs', (await page.$$eval('.shapelist li .meta',
+  (els) => els.map((e) => e.textContent))).some((r) => r.includes('from Earth')))
 await page.click('.shapelist li button[title="Place EarthPatch"]')
 await page.waitForTimeout(300)
 console.log('--- cross-canvas ---')
@@ -295,7 +298,8 @@ check('shape removed from library', await page.$$eval('.shapelist li', (els) => 
 // Clean up: delete the test canvas and the remaining shape (via the dialog).
 await page.click('.shapelist li button[title="Delete EarthPatch"]')
 await page.click('.modal button.danger')
-await page.click('.canvas-info button[title="Delete map"]')
+await page.click('[data-testid=map-settings]')
+await page.click('button[title="Delete map"]')
 await page.click('.modal button.danger')
 await page.waitForTimeout(400)
 
