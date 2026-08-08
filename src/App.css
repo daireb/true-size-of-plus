@@ -249,3 +249,157 @@ body {
 .maplibregl-ctrl-attrib {
   font-size: 10px;
 }
+
+/* --- campaign map --- */
+.campaign {
+  margin-top: 16px;
+  padding-top: 14px;
+  border-top: 1px solid var(--line);
+}
+
+.campaign h2 {
+  margin: 0 0 9px;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.drop {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  align-items: center;
+  padding: 16px 12px;
+  text-align: center;
+  border: 1px dashed var(--line);
+  border-radius: 9px;
+  cursor: pointer;
+}
+
+.drop:hover,
+.drop.over {
+  border-color: var(--accent);
+  background: rgba(110, 168, 254, 0.08);
+}
+
+.drop strong {
+  font-size: 13px;
+}
+
+.drop small,
+.campaign-meta small {
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.campaign-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.campaign-meta strong {
+  font-size: 13px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.campaign-meta .extent {
+  color: var(--accent);
+}
+
+.campaign-actions {
+  display: flex;
+  gap: 6px;
+  margin-top: 9px;
+}
+
+.campaign-actions button {
+  padding: 5px 10px;
+  font-size: 12px;
+  color: var(--text);
+  background: var(--panel-soft);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.campaign-actions button:hover {
+  border-color: var(--accent);
+}
+
+.campaign-actions .primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #0d1117;
+  font-weight: 600;
+}
+
+.calibrate {
+  margin-top: 9px;
+  padding: 10px;
+  background: var(--panel-soft);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+
+.calibrate p {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--muted);
+}
+
+.calibrate .campaign-actions {
+  margin-top: 8px;
+}
+
+.distance {
+  display: flex;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.distance input,
+.distance select {
+  padding: 6px 8px;
+  font-size: 13px;
+  color: var(--text);
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  outline: none;
+}
+
+.distance input {
+  flex: 1;
+  min-width: 0;
+}
+
+.distance input:focus {
+  border-color: var(--accent);
+}
+
+.opacity {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  margin-top: 11px;
+}
+
+.opacity span {
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.opacity input {
+  flex: 1;
+  min-width: 0;
+  height: 3px;
+  accent-color: var(--accent);
+  cursor: pointer;
+}

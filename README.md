@@ -155,6 +155,36 @@ Each placed country has a rotation slider (-180° to 180°, clockwise). Clicking
 the degree readout resets it to 0. Rotation is part of the stored transform, so
 it composes with dragging without drift.
 
+## Your own campaign map
+
+Drop an image onto the panel (or click to pick one). It never leaves the
+machine — it is held as an object URL and stored in IndexedDB, not uploaded,
+and not committed to this repo. `localStorage` is unusable here: campaign maps
+are multi-megabyte and base64 would blow past its ~5 MB cap.
+
+**Calibration.** Click two points on the map — along its scale bar, or corner to
+corner if you know the total width — and say how far apart they are. Whatever
+provisional scale the image was placed at cancels out, because the two points
+are converted back to image pixels first, so only their pixel separation and
+your stated distance matter.
+
+**Where it goes.** Pinned centred on 0°, 0°. The equator is chosen deliberately:
+Mercator distortion is exactly 1.0 there and grows as sec(latitude), so it is
+the one place a fantasy map can sit and have real countries dragged alongside it
+at an honest scale. A 2,000-mile-wide map spans ±14.47° of longitude and its top
+edge is drawn only 1.25% larger than its centre.
+
+The latitude extent is derived in Mercator space rather than from a plain
+degrees-per-km ratio, because MapLibre draws an image source as a quad
+interpolated in Mercator coordinates — matching the aspect ratio *there* is what
+keeps the picture itself unstretched.
+
+`npm run verify` checks the maths (corners map back to exact image pixels, a
+7.3x-wrong provisional scale still recovers the right answer) and
+`scripts/smoke-campaign.mjs` drives the whole flow in a real browser against a
+generated image, including measuring the drawn result on the globe rather than
+trusting the UI readout.
+
 ## Not yet built
 
 Loading a custom (e.g. D&D campaign) map as the basemap and placing real

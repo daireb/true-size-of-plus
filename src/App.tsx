@@ -14,6 +14,8 @@ import {
 import type { LonLat } from './lib/geo'
 import { loadCountries, loadRegions, metricsOf, formatArea, searchPlaces } from './lib/places'
 import type { Place } from './lib/places'
+import { useCampaignMap } from './lib/useCampaignMap'
+import CampaignPanel from './CampaignPanel'
 import './App.css'
 
 /**
@@ -138,6 +140,8 @@ export default function App() {
   const [activeUid, setActiveUid] = useState<string | null>(null)
 
   const dragRef = useRef<{ uid: string; grab: LonLat; from: LonLat } | null>(null)
+
+  const campaign = useCampaignMap(mapRef, mapReady)
 
   useEffect(() => {
     loadCountries().then(setCountries).catch((e) => setError(String(e)))
@@ -287,6 +291,8 @@ export default function App() {
     if (!map || !mapReady) return
 
     const onDown = (e: maplibregl.MapMouseEvent | maplibregl.MapTouchEvent) => {
+      // While picking calibration points, clicks belong to the campaign map.
+      if (campaign.calibrating) return
       const hit = map.queryRenderedFeatures(e.point, { layers: FILL_LAYERS })[0]
       if (!hit) return
       const uid = String(hit.properties?.uid)
@@ -307,6 +313,10 @@ export default function App() {
     const onMove = (e: maplibregl.MapMouseEvent | maplibregl.MapTouchEvent) => {
       const drag = dragRef.current
       if (!drag) {
+        if (campaign.calibrating) {
+          map.getCanvas().style.cursor = 'crosshair'
+          return
+        }
         const over = map.queryRenderedFeatures(e.point, { layers: FILL_LAYERS })
         map.getCanvas().style.cursor = over.length ? 'grab' : ''
         return
@@ -347,7 +357,7 @@ export default function App() {
       map.off('touchend', onUp)
       map.off('mouseout', onUp)
     }
-  }, [mapReady, placed])
+  }, [mapReady, placed, campaign.calibrating])
 
   // --- actions -------------------------------------------------------------
   const addPlace = (c: Place) => {
@@ -505,6 +515,8 @@ export default function App() {
             too: Florida, Scotland, Hokkaido.
           </p>
         )}
+        <CampaignPanel c={campaign} />
+
         {placed.some((p) => p.simplified) && (
           <p className="hint">
             Outlines over {DRAG_BUDGET.toLocaleString()} points are simplified
