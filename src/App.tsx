@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
 import { mercatorScale } from './lib/geo'
 import type { LonLat } from './lib/geo'
-import { geoToPlane, describeKm, KM_PER_MILE, shapeFromFlatTrace, shapeFromGeoTrace } from './lib/flat'
+import { geoToPlane, describeKm, KM_PER_MILE, shapeFromFlatTrace, shapeFromGeoTrace, planeCentroid } from './lib/flat'
 import type { PlanePoint } from './lib/flat'
 import { simplifyGeometry } from './lib/geo'
 import { loadCountries, loadRegions, metricsOf, formatArea, searchPlaces } from './lib/places'
@@ -516,32 +516,41 @@ export default function App() {
         def: { kind: 'geo', geometry: t.geometry },
         areaKm2: t.areaKm2,
         tracedOn: 'Earth',
+        home: { canvasId: EARTH_ID, target: t.centroid },
       }
     } else {
       const t = shapeFromFlatTrace(rings, activeCanvas!.kmPerPixel)
+      // The traced anchor in image pixels — the shape's home on this map.
+      const c = planeCentroid(rings.map((r) => [r]))
       shape = {
         id: freshId('shape'),
         name,
         def: { kind: 'flat', rings: t.rings },
         areaKm2: t.areaKm2,
         tracedOn: activeCanvas!.name,
+        home: { canvasId: activeId, target: c },
       }
     }
     await putShape(shape)
     setShapes((prev) => [...prev, shape])
     cancelTrace()
+    // A freshly traced shape spawns in immediately, exactly where it was drawn.
+    placeShape(shape)
   }
 
   const placeShape = (s: CustomShape) => {
     const uid = freshId('p')
-    const target: [number, number] = onEarth
-      ? s.def.kind === 'geo'
-        ? shapeHomeCentroid(s)!
-        : ((viewports[EARTH_ID] as EarthViewport | undefined)?.center ?? [0, 20])
-      : flatRef.current?.viewCenter() ?? [
-          (activeCanvas?.width ?? 0) / 2,
-          (activeCanvas?.height ?? 0) / 2,
-        ]
+    const target: [number, number] =
+      s.home && s.home.canvasId === activeId
+        ? s.home.target
+        : onEarth
+          ? s.def.kind === 'geo'
+            ? shapeHomeCentroid(s)!
+            : ((viewports[EARTH_ID] as EarthViewport | undefined)?.center ?? [0, 20])
+          : flatRef.current?.viewCenter() ?? [
+              (activeCanvas?.width ?? 0) / 2,
+              (activeCanvas?.height ?? 0) / 2,
+            ]
     const sp = {
       uid,
       name: s.name,
@@ -551,9 +560,13 @@ export default function App() {
       target,
       ref: { kind: 'shape' as const, id: s.id },
     }
+    // Resolve against the shape we hold, not the memoised index — when called
+    // straight after saving a new trace, shapesById is still one render stale.
+    const withShape = new Map(shapesById)
+    withShape.set(s.id, s)
     const item = onEarth
-      ? earthFromStored(sp, placesById, shapesById)
-      : flatFromStored(sp, placesById, shapesById)
+      ? earthFromStored(sp, placesById, withShape)
+      : flatFromStored(sp, placesById, withShape)
     if (!item) return
     setPlacedFor(activeId)((prev) => [...prev, item])
     if (onEarth) earthRef.current?.flyTo(target as LonLat, 3)
@@ -970,13 +983,17 @@ export default function App() {
         <ul className="placed">
           {placed.map((p) => {
             const geoSrc = onEarth && (p as EarthPlaced).src.kind === 'geo'
-            const home = geoSrc
+            const ratioHome = geoSrc
               ? ((p as EarthPlaced).src as { homeCentroid: LonLat }).homeCentroid
               : null
-            const ratio = home
-              ? (mercatorScale(p.target[1]) / mercatorScale(home[1])) ** 2
+            const shapeHome = p.ref.kind === 'shape' ? shapesById.get(p.ref.id)?.home : undefined
+            const home =
+              ratioHome ??
+              (shapeHome && shapeHome.canvasId === activeId ? shapeHome.target : null)
+            const ratio = ratioHome
+              ? (mercatorScale(p.target[1]) / mercatorScale(ratioHome[1])) ** 2
               : 1
-            const moved = home ? Math.abs(ratio - 1) > 0.005 : false
+            const moved = ratioHome ? Math.abs(ratio - 1) > 0.005 : false
             const open = p.uid === selectedUid
             return (
               <li key={p.uid} className={open ? 'open' : undefined}>
@@ -1030,15 +1047,16 @@ export default function App() {
                       >
                         {p.bearing}°
                       </button>
+                      {home && (
+                        <button
+                          className="deg reset"
+                          onClick={() => updatePlaced(p.uid, { target: home, bearing: 0 })}
+                          title="Send home — reset position and rotation"
+                        >
+                          ⟲
+                        </button>
+                      )}
                     </div>
-                    {home && (
-                      <button
-                        className="wide"
-                        onClick={() => updatePlaced(p.uid, { target: home, bearing: 0 })}
-                      >
-                        Send home
-                      </button>
-                    )}
                   </div>
                 )}
               </li>

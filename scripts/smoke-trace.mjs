@@ -185,11 +185,34 @@ check('archipelago saved with summed area (~420,900 km²)',
   `${row} (expected ~${Math.round(expectedArea).toLocaleString()})`)
 check('trace mode exits after save', !(await page.isVisible('.tracebar')))
 
-// --- place it on the same canvas ----------------------------------------------
-await page.click('.shapelist li button[title="Place Testlands"]')
-await page.waitForTimeout(300)
+// --- auto-spawn at its traced position -------------------------------------------
+console.log('--- auto-spawn and home ---')
+check('freshly traced shape spawns in', await page.evaluate(() => window.__flat.count()) === 1)
+// Area-weighted centroid of the two islands: (2119, 1012) image px.
+const spawn = await page.evaluate(() => window.__flat.items()[0].target)
+check('spawns exactly where it was traced',
+  Math.abs(spawn[0] - 2119) < 10 && Math.abs(spawn[1] - 1012) < 10,
+  `target ${spawn.map(Math.round)}`)
+
+// Drag it away, then send it home from the expanded row.
+const sp = await page.evaluate(() => window.__flat.screenFromWorld(window.__flat.items()[0].target))
+await page.mouse.move(sp[0], sp[1])
+await page.mouse.down()
+await page.mouse.move(sp[0] + 120, sp[1] + 60, { steps: 5 })
+await page.mouse.up()
+await page.waitForTimeout(200)
+await page.click('.placed li .row')
+await page.waitForTimeout(150)
+await page.click('button[title="Send home — reset position and rotation"]')
+await page.waitForTimeout(200)
+const homed = await page.evaluate(() => window.__flat.items()[0].target)
+check('send home returns it to the traced spot',
+  Math.abs(homed[0] - 2119) < 10 && Math.abs(homed[1] - 1012) < 10,
+  `target ${homed.map(Math.round)}`)
+await page.mouse.click(1250, 60) // deselect
+await page.waitForTimeout(150)
+
 console.log('--- place on image canvas ---')
-check('subject added to canvas', await page.evaluate(() => window.__flat.count()) === 1)
 const bbox = await page.evaluate(() => window.__flat.bboxPx(window.__flat.items()[0].uid))
 check('placed at its traced footprint (1700x1100 img px)',
   Math.abs(bbox.w - 1700) < 12 && Math.abs(bbox.h - 1100) < 12, `${bbox.w.toFixed(1)}x${bbox.h.toFixed(1)} px`)

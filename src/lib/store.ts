@@ -38,6 +38,14 @@ export interface CustomShape {
   areaKm2: number
   /** Name of the canvas it was traced on, for provenance. */
   tracedOn?: string
+  /**
+   * Where it was traced: canvas id plus anchor (LonLat on Earth, image px on
+   * an image canvas). Deliberately loose coupling — if that canvas is ever
+   * deleted this simply stops matching and placement falls back to the view
+   * centre. Used to spawn the shape at its true position on its own map and
+   * to give it a "send home" there.
+   */
+  home?: { canvasId: string; target: [number, number] }
 }
 
 export type PlacedRef = { kind: 'place' | 'shape'; id: string }

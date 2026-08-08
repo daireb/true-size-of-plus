@@ -204,6 +204,12 @@ stay fully editable in place — move, insert, delete — which is why there is 
 "active island" concept: a closed ring has no end, so inserting on its closing
 edge already is appending.
 
+A freshly saved shape spawns straight onto the canvas it was traced on, at the
+spot it was drawn, and remembers that spot as its home: place it on its own map
+again and it lands there, and the ⟲ button sends it back after wandering. The
+link is deliberately loose — delete that map and the shape survives, it just
+falls back to spawning at the view centre.
+
 Named shapes
 join a library that works everywhere: trace your kingdom on your campaign map
 and drop it next to France on Earth, or trace a patch of Earth and drop it onto
