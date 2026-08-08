@@ -1,8 +1,19 @@
 {
   "name": "true-size-of-plus",
+  "version": "1.0.0",
+  "description": "Drag countries around Earth to see past Mercator, or onto your own map at true size.",
+  "license": "MIT",
+  "author": "Daire Bohan",
+  "homepage": "https://daireb.github.io/true-size-of-plus/",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/daireb/true-size-of-plus.git"
+  },
   "private": true,
-  "version": "0.0.0",
   "type": "module",
+  "engines": {
+    "node": ">=22.6"
+  },
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
