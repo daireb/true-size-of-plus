@@ -214,6 +214,7 @@ export default function App() {
    *  dragged right now, draw it simplified". */
   const [selectedUid, setSelectedUid] = useState<string | null>(null)
   const [showSettings, setShowSettings] = useState(false)
+  const [nameDraft, setNameDraft] = useState('')
   const [showHelp, setShowHelp] = useState(false)
 
   /**
@@ -348,6 +349,28 @@ export default function App() {
     } catch (e) {
       setError(String(e instanceof Error ? e.message : e))
     }
+  }
+
+  const renameCanvas = async (id: string, rawName: string) => {
+    const def = canvases.find((c) => c.id === id)
+    if (!def) return
+    const name = rawName.trim()
+    if (!name || name === def.name) {
+      setNameDraft(def.name)
+      return
+    }
+    const next = { ...def, name }
+    await putCanvas(next)
+    setCanvases((prev) => prev.map((c) => (c.id === id ? next : c)))
+    // Shape homes reference the canvas by id, so they survive untouched; only
+    // the human-readable provenance label needs to follow the new name.
+    const relabelled = shapes.filter((sh) => sh.home?.canvasId === id)
+    for (const sh of relabelled) await putShape({ ...sh, tracedOn: name })
+    if (relabelled.length)
+      setShapes((prev) =>
+        prev.map((sh) => (sh.home?.canvasId === id ? { ...sh, tracedOn: name } : sh))
+      )
+    setNameDraft(name)
   }
 
   const deleteCanvas = async (id: string) => {
@@ -832,7 +855,10 @@ export default function App() {
                   data-testid="map-settings"
                   title="Map settings"
                   aria-expanded={showSettings}
-                  onClick={() => setShowSettings((v) => !v)}
+                  onClick={() => {
+                    if (!showSettings && activeCanvas) setNameDraft(activeCanvas.name)
+                    setShowSettings(!showSettings)
+                  }}
                 >
                   ⚙
                 </button>
@@ -872,6 +898,16 @@ export default function App() {
 
         {activeCanvas && showSettings && mode !== 'calibrate' && (
           <section className="card">
+            <div className="distance">
+              <input
+                data-testid="rename-map"
+                value={nameDraft}
+                onChange={(e) => setNameDraft(e.target.value)}
+                onKeyDown={(e) => e.key === 'Enter' && renameCanvas(activeCanvas.id, nameDraft)}
+                onBlur={() => renameCanvas(activeCanvas.id, nameDraft)}
+                aria-label="Map name"
+              />
+            </div>
             <small>
               {activeCanvas.width.toLocaleString()} × {activeCanvas.height.toLocaleString()} px
               · flat, uniform scale
@@ -1106,7 +1142,10 @@ export default function App() {
                     <strong>{sh.name}</strong>
                     <small>
                       {formatArea(sh.areaKm2)}
-                      {sh.tracedOn && sh.tracedOn !== (activeCanvas?.name ?? 'Earth')
+                      {sh.tracedOn &&
+                      (sh.home
+                        ? sh.home.canvasId !== activeId
+                        : sh.tracedOn !== (activeCanvas?.name ?? 'Earth'))
                         ? ` · from ${sh.tracedOn}`
                         : ''}
                     </small>

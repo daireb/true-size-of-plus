@@ -291,6 +291,24 @@ console.log('--- persistence ---')
 check('shapes survive reload', await page.$$eval('.shapelist li', (els) => els.length) === 2)
 check('placed shapes rehydrate', await page.evaluate(() => window.__flat.count()) === 2)
 
+// --- rename the map; provenance labels follow ------------------------------------
+console.log('--- rename ---')
+await page.click('[data-testid=map-settings]')
+await page.waitForTimeout(150)
+await page.fill('[data-testid=rename-map]', 'renamedworld')
+await page.keyboard.press('Enter')
+await page.waitForTimeout(300)
+check('chip shows the new name',
+  await page.evaluate(() => document.querySelector('.chip.active')?.textContent) === 'renamedworld')
+await page.click('.chip') // Earth
+await page.waitForTimeout(800)
+const prov = await page.$$eval('.shapelist li .meta', (els) => els.map((e) => e.textContent.replace(/\s+/g, ' ')))
+check('shape provenance relabelled to the new name',
+  prov.some((r) => r.includes('Testlands') && r.includes('from renamedworld')), prov.join(' | '))
+await page.click('.chipwrap .chip') // back to the image canvas
+await page.waitForFunction(() => !!window.__flat, null, { timeout: 10000 })
+await page.waitForTimeout(400)
+
 // --- deletion: confirm dialog, cascade, undo -----------------------------------
 console.log('--- deletion ---')
 await page.click('.shapelist li button[title="Delete Testlands"]')
