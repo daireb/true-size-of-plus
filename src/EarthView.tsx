@@ -120,6 +120,16 @@ const createStyle = (): maplibregl.StyleSpecification => ({
       },
     },
     {
+      id: 'pick-fill',
+      type: 'fill',
+      source: PICK_SOURCE,
+      filter: ['==', ['geometry-type'], 'Polygon'],
+      paint: {
+        'fill-color': '#ffd166',
+        'fill-opacity': ['case', ['==', ['get', 'provisional'], true], 0.1, 0.15],
+      },
+    },
+    {
       id: 'pick-line',
       type: 'line',
       source: PICK_SOURCE,
@@ -386,6 +396,11 @@ const EarthView = forwardRef<EarthViewHandle, Props>(function EarthView(
     for (const ring of traceRings) {
       features.push({
         type: 'Feature',
+        geometry: { type: 'Polygon', coordinates: [[...ring, ring[0]]] },
+        properties: { provisional: false },
+      })
+      features.push({
+        type: 'Feature',
         geometry: { type: 'LineString', coordinates: [...ring, ring[0]] },
         properties: {},
       })
@@ -407,6 +422,12 @@ const EarthView = forwardRef<EarthViewHandle, Props>(function EarthView(
         type: 'Feature',
         geometry: { type: 'LineString', coordinates: picks },
         properties: {},
+      })
+    if (picks.length >= 3)
+      features.push({
+        type: 'Feature',
+        geometry: { type: 'Polygon', coordinates: [[...picks, picks[0]]] },
+        properties: { provisional: true },
       })
     src?.setData({ type: 'FeatureCollection', features })
   }, [picks, traceRings, mapReady])

@@ -261,12 +261,19 @@ const FlatView = forwardRef<FlatViewHandle, Props>(function FlatView(
       ctx.stroke()
     }
     for (const ring of rings) {
-      ctx.strokeStyle = '#ffd166'
-      ctx.lineWidth = 2 / zoom
-      ctx.setLineDash([6 / zoom, 4 / zoom])
       ctx.beginPath()
       ring.forEach(([x, y], i) => (i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y)))
       ctx.closePath()
+      // A light wash of the editor's amber: signals "drag inside to move"
+      // without ever being mistaken for a placed subject (those are solid
+      // palette colours at 0.55; this is reserved amber at 0.15, dashed).
+      ctx.globalAlpha = 0.15
+      ctx.fillStyle = '#ffd166'
+      ctx.fill()
+      ctx.globalAlpha = 1
+      ctx.strokeStyle = '#ffd166'
+      ctx.lineWidth = 2 / zoom
+      ctx.setLineDash([6 / zoom, 4 / zoom])
       ctx.stroke()
       ctx.setLineDash([])
       for (const [x, y] of ring) handle(x, y, 4)
@@ -280,7 +287,17 @@ const FlatView = forwardRef<FlatViewHandle, Props>(function FlatView(
         pk.forEach(([x, y], i) => (i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y)))
         ctx.stroke()
       }
-      // Faint closing hint once the ring could be finished.
+      // Faint closing hint once the ring could be finished, and a fainter
+      // wash still — this ring is provisional until committed or saved.
+      if (pk.length >= 3) {
+        ctx.beginPath()
+        pk.forEach(([x, y], i) => (i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y)))
+        ctx.closePath()
+        ctx.globalAlpha = 0.1
+        ctx.fillStyle = '#ffd166'
+        ctx.fill()
+        ctx.globalAlpha = 1
+      }
       if (pk.length >= 3) {
         ctx.globalAlpha = 0.35
         ctx.beginPath()
