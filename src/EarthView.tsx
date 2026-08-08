@@ -10,7 +10,7 @@ import * as maplibregl from 'maplibre-gl'
 import type { Feature } from 'geojson'
 import 'maplibre-gl/dist/maplibre-gl.css'
 
-import { createPlacement, transformGeometry, clamp } from './lib/geo'
+import { createPlacement, transformGeometry, unwrapGeometry, clamp } from './lib/geo'
 import type { LonLat } from './lib/geo'
 import { planeToGeo, hitTracePoint } from './lib/flat'
 import type { PlanePoint } from './lib/flat'
@@ -301,7 +301,9 @@ const EarthView = forwardRef<EarthViewHandle, Props>(function EarthView(
       } else {
         feature = {
           type: 'Feature',
-          geometry:
+          // Unwrapped so shapes straddling the antimeridian draw across into
+          // the neighbouring world copy instead of lassoing the whole planet.
+          geometry: unwrapGeometry(
             p.src.kind === 'geo'
               ? transformGeometry(
                   isActive ? p.src.dragGeometry : p.src.homeGeometry,
@@ -309,7 +311,8 @@ const EarthView = forwardRef<EarthViewHandle, Props>(function EarthView(
                 )
               : // Traced flat shapes carry their own equal-area projection, so
                 // they land true-sized wherever they're dropped on Earth.
-                planeToGeo(p.src.rings, p.target, p.bearing),
+                planeToGeo(p.src.rings, p.target, p.bearing)
+          ),
           properties: { uid: p.uid, color: p.color, name: p.name },
         }
         cache.set(p.uid, { key, feature })

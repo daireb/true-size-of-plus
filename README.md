@@ -85,8 +85,6 @@ and actually moves when dragged.
 
 ## Known limitations
 
-- A country dragged across the antimeridian (±180°) renders wrapped rather than
-  clipped cleanly.
 - Latitudes are clamped near the poles, where Mercator goes to infinity.
 - Antarctica is excluded — it has no meaningful Mercator representation.
 - Only two levels exist: countries and admin_1 regions. Informal groupings such

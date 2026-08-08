@@ -8,6 +8,7 @@ import { geoArea, geoCentroid, geoDistance } from 'd3-geo'
 import {
   createPlacement,
   transformGeometry,
+  unwrapGeometry,
   simplifyGeometry,
   countVertices,
   mercatorScale,
@@ -24,6 +25,7 @@ const get = (name) => {
   return f
 }
 const areaKm2 = (g) => geoArea({ type: 'Feature', geometry: g, properties: {} }) * EARTH_RADIUS_KM ** 2
+const trueAreaKm2 = areaKm2
 const centroid = (g) => geoCentroid({ type: 'Feature', geometry: g, properties: {} })
 const place = (g, from, to, bearing = 0) =>
   transformGeometry(g, createPlacement(from, to, bearing))
@@ -146,6 +148,31 @@ for (const name of ['Canada', 'Russia', 'Ireland']) {
       `${full.toLocaleString()} -> ${n.toLocaleString()} vertices, area off ${areaErr.toFixed(2)}%`
     )
   }
+}
+
+console.log('\n--- antimeridian: rings stay continuous across the date line ---')
+{
+  const maxJump = (g) => {
+    let worst = 0
+    const rings = g.type === 'Polygon' ? [g.coordinates] : g.coordinates
+    for (const poly of rings)
+      for (const ring of poly)
+        for (let i = 1; i < ring.length; i++)
+          worst = Math.max(worst, Math.abs(ring[i][0] - ring[i - 1][0]))
+    return worst
+  }
+  const f = get('Greenland')
+  const home = geoCentroid(f)
+  const wrapped = place(f.geometry, home, [179.5, 10])
+  // Guard against a vacuous test: the raw placement really must straddle.
+  check('raw placement at lon 179.5 does wrap', maxJump(wrapped) > 180, `worst jump ${maxJump(wrapped).toFixed(0)}°`)
+  const un = unwrapGeometry(wrapped)
+  check('unwrapped rings never jump more than 180°', maxJump(un) < 180, `worst jump ${maxJump(un).toFixed(1)}°`)
+  const drift = Math.abs(trueAreaKm2(un) - trueAreaKm2(wrapped)) / trueAreaKm2(wrapped)
+  check('unwrapping preserves area', drift < 1e-9, `rel drift ${drift.toExponential(1)}`)
+  const away = unwrapGeometry(place(f.geometry, home, [30, 40]))
+  check('shapes away from the line are untouched',
+    JSON.stringify(away) === JSON.stringify(place(f.geometry, home, [30, 40])), 'byte-identical')
 }
 
 console.log('\n--- Mercator: what the map draws vs. what is true ---')

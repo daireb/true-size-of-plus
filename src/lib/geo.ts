@@ -299,3 +299,51 @@ export const simplifyGeometry = (geometry: Geometry, budget: number): Geometry =
  */
 export const mercatorScale = (lat: number) =>
   1 / Math.cos(clamp(Math.abs(lat), 0, 89) * D2R)
+
+/**
+ * Make each ring's longitudes continuous across the antimeridian.
+ *
+ * Placement maths emits longitudes wrapped to ±180, so a shape straddling the
+ * date line gets a vertex at +179.9 followed by one at -179.9 — which GeoJSON
+ * consumers read as a segment travelling 359.8° the long way round the world.
+ * Unwrapping (179.9 -> 180.1) keeps each segment short; MapLibre renders
+ * out-of-range longitudes in the adjacent world copy, so the shape draws
+ * seamlessly across the line. Spherical maths (d3 area/centroid) never cared
+ * either way — this is purely for the flat renderer's benefit.
+ */
+export const unwrapGeometry = (geometry: Geometry): Geometry => {
+  const ring = (r: Position[]): Position[] => {
+    let offset = 0
+    let prev: number | null = null
+    return r.map((c) => {
+      let lon = c[0] + offset
+      if (prev !== null) {
+        if (lon - prev > 180) {
+          offset -= 360
+          lon -= 360
+        } else if (lon - prev < -180) {
+          offset += 360
+          lon += 360
+        }
+      }
+      prev = lon
+      return c.length > 2 ? [lon, c[1], ...c.slice(2)] : [lon, c[1]]
+    })
+  }
+
+  switch (geometry.type) {
+    case 'LineString':
+      return { ...geometry, coordinates: ring(geometry.coordinates) }
+    case 'Polygon':
+      return { ...geometry, coordinates: geometry.coordinates.map(ring) }
+    case 'MultiPolygon':
+      return {
+        ...geometry,
+        coordinates: geometry.coordinates.map((p) => p.map(ring)),
+      }
+    case 'GeometryCollection':
+      return { ...geometry, geometries: geometry.geometries.map(unwrapGeometry) }
+    default:
+      return geometry
+  }
+}
