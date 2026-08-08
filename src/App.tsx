@@ -56,44 +56,6 @@ const readImageSize = (blob: Blob) =>
     img.src = url
   })
 
-/**
- * Two-click delete: first click arms (turns red), second click within 3s
- * fires. Exists because a one-click delete sat next to the place button and
- * ate a shape someone had spent an evening tracing.
- */
-function ConfirmButton({
-  title,
-  armedLabel,
-  onConfirm,
-  children,
-}: {
-  title: string
-  armedLabel?: string
-  onConfirm: () => void
-  children: React.ReactNode
-}) {
-  const [armed, setArmed] = useState(false)
-  useEffect(() => {
-    if (!armed) return
-    const t = setTimeout(() => setArmed(false), 3000)
-    return () => clearTimeout(t)
-  }, [armed])
-  return (
-    <button
-      className={armed ? 'danger' : undefined}
-      title={armed ? 'Click again to confirm' : title}
-      onClick={() => {
-        if (armed) {
-          setArmed(false)
-          onConfirm()
-        } else setArmed(true)
-      }}
-    >
-      {armed && armedLabel ? armedLabel : children}
-    </button>
-  )
-}
-
 export default function App() {
   // --- datasets --------------------------------------------------------------
   const [countries, setCountries] = useState<Place[]>([])
@@ -252,6 +214,21 @@ export default function App() {
    * One-slot undo for deletions. Confirmation stops slips; this catches the
    * confident-but-wrong click. Holds the deleted thing in memory for 12s.
    */
+  /** Pending delete confirmation. Popup rather than an armed button: it
+   *  names the target (guards wrong-row deletes) and a double-click cannot
+   *  blow through it, since Delete sits in a different place to ×. */
+  const [confirm, setConfirm] = useState<{
+    title: string
+    body: string
+    action: () => void
+  } | null>(null)
+  useEffect(() => {
+    if (!confirm) return
+    const h = (e: KeyboardEvent) => e.key === 'Escape' && setConfirm(null)
+    window.addEventListener('keydown', h)
+    return () => window.removeEventListener('keydown', h)
+  }, [confirm])
+
   type Trash =
     | { kind: 'shape'; shape: CustomShape; placements: Record<string, AnyPlaced[]> }
     | { kind: 'canvas'; def: ImageCanvasDef; session?: StoredSession }
@@ -508,12 +485,12 @@ export default function App() {
         e.preventDefault()
         undoPoint()
       } else if (e.key === 'Escape') {
-        cancelTrace()
+        if (!confirm) cancelTrace()
       }
     }
     window.addEventListener('keydown', h)
     return () => window.removeEventListener('keydown', h)
-  }, [mode, undoPoint])
+  }, [mode, undoPoint, confirm])
 
   const traceReady = traceRings.length > 0 || picks.length >= 3
 
@@ -714,6 +691,27 @@ export default function App() {
         </div>
       )}
 
+      {confirm && (
+        <div className="modal-overlay" onClick={() => setConfirm(null)}>
+          <div className="modal" onClick={(e) => e.stopPropagation()}>
+            <strong>{confirm.title}</strong>
+            <p>{confirm.body}</p>
+            <div className="campaign-actions">
+              <button autoFocus onClick={() => setConfirm(null)}>Cancel</button>
+              <button
+                className="danger"
+                onClick={() => {
+                  confirm.action()
+                  setConfirm(null)
+                }}
+              >
+                Delete
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {mode === 'trace' && (
         <div className="tracebar">
           <span className="count">
@@ -825,13 +823,18 @@ export default function App() {
                 <button className="primary" onClick={() => { setMode('calibrate'); setPicks([]) }}>
                   Set scale
                 </button>
-                <ConfirmButton
+                <button
                   title="Delete map"
-                  armedLabel="Sure?"
-                  onConfirm={() => deleteCanvas(activeCanvas.id)}
+                  onClick={() =>
+                    setConfirm({
+                      title: `Delete map “${activeCanvas.name}”?`,
+                      body: 'Everything placed on it and its saved session go with it. You can undo for 12 seconds.',
+                      action: () => deleteCanvas(activeCanvas.id),
+                    })
+                  }
                 >
                   Delete
-                </ConfirmButton>
+                </button>
               </div>
             ) : (
               <div className="calibrate">
@@ -1001,9 +1004,18 @@ export default function App() {
                   <button onClick={() => placeShape(sh)} title={`Place ${sh.name}`}>
                     ＋
                   </button>
-                  <ConfirmButton title={`Delete ${sh.name}`} onConfirm={() => deleteShape(sh.id)}>
+                  <button
+                    title={`Delete ${sh.name}`}
+                    onClick={() =>
+                      setConfirm({
+                        title: `Delete “${sh.name}”?`,
+                        body: 'Its placements on every canvas go with it. You can undo for 12 seconds.',
+                        action: () => deleteShape(sh.id),
+                      })
+                    }
+                  >
                     ×
-                  </ConfirmButton>
+                  </button>
                 </li>
               ))}
             </ul>

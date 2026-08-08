@@ -265,16 +265,18 @@ console.log('--- persistence ---')
 check('shapes survive reload', await page.$$eval('.shapelist li', (els) => els.length) === 2)
 check('placed shapes rehydrate', await page.evaluate(() => window.__flat.count()) === 2)
 
-// --- deletion: confirm, cascade, undo ---------------------------------------------
+// --- deletion: confirm dialog, cascade, undo -----------------------------------
 console.log('--- deletion ---')
 await page.click('.shapelist li button[title="Delete Testlands"]')
 await page.waitForTimeout(200)
-check('first delete click only arms', await page.$$eval('.shapelist li', (els) => els.length) === 2)
-await page.waitForTimeout(3300)
-check('arming times out harmlessly', !(await page.isVisible('.shapelist button.danger')))
+check('delete asks for confirmation naming the shape',
+  await page.isVisible('.modal') && (await page.textContent('.modal')).includes('Testlands'))
+await page.click('.modal button:not(.danger)') // Cancel
+await page.waitForTimeout(200)
+check('cancel keeps the shape', await page.$$eval('.shapelist li', (els) => els.length) === 2)
 
 await page.click('.shapelist li button[title="Delete Testlands"]')
-await page.click('.shapelist li button.danger')
+await page.click('.modal button.danger')
 await page.waitForTimeout(300)
 check('confirmed delete removes the shape', await page.$$eval('.shapelist li', (els) => els.length) === 1)
 check('its placements evict too', await page.evaluate(() => window.__flat.count()) === 1)
@@ -286,15 +288,15 @@ check('undo restores the shape', await page.$$eval('.shapelist li', (els) => els
 check('undo restores its placements', await page.evaluate(() => window.__flat.count()) === 2)
 
 await page.click('.shapelist li button[title="Delete Testlands"]')
-await page.click('.shapelist li button.danger')
+await page.click('.modal button.danger')
 await page.waitForTimeout(300)
 check('shape removed from library', await page.$$eval('.shapelist li', (els) => els.length) === 1)
 
-// Clean up: delete the test canvas and the remaining shape (two clicks each).
+// Clean up: delete the test canvas and the remaining shape (via the dialog).
 await page.click('.shapelist li button[title="Delete EarthPatch"]')
-await page.click('.shapelist li button.danger')
+await page.click('.modal button.danger')
 await page.click('.canvas-info button[title="Delete map"]')
-await page.click('.canvas-info button.danger')
+await page.click('.modal button.danger')
 await page.waitForTimeout(400)
 
 console.log('\nconsole errors:', errors.length ? errors : 'none')

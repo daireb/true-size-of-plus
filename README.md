@@ -208,9 +208,10 @@ directions, so area is preserved exactly. Shapes traced on Earth get their ring
 winding normalised — a polygon traced the wrong way round would otherwise read
 as the whole sphere minus itself.
 
-Deleting a shape or a canvas takes two clicks — the button arms red first —
-and either can be undone for 12 seconds afterwards. The undo restores a
-shape's placements as well as the shape.
+Deleting a shape or a canvas opens a confirmation naming exactly what goes —
+a popup rather than an armed button, so a habitual double-click can't blow
+through it and adjacent rows can't be mixed up. Either delete can be undone
+for 12 seconds afterwards; undo restores a shape's placements as well.
 
 ## Save / load
 
