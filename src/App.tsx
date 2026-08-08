@@ -227,6 +227,20 @@ export default function App() {
   const [picks, setPicks] = useState<PlanePoint[]>([])
   /** Completed islands of the trace in progress; picks is the ring being drawn. */
   const [traceRings, setTraceRings] = useState<PlanePoint[][]>([])
+  /**
+   * Undo history: a snapshot of the whole trace before each edit — appends,
+   * inserts, vertex moves, island commits alike. Traces are tiny, so full
+   * snapshots beat a command pattern on simplicity and are just as cheap.
+   */
+  const [traceHistory, setTraceHistory] = useState<
+    { picks: PlanePoint[]; rings: PlanePoint[][] }[]
+  >([])
+  /**
+   * A drag gesture stashes its pre-state here on pointer-down and only
+   * commits it to history on the first actual change — so one drag is one
+   * undo step, and a grab that never moves pollutes nothing.
+   */
+  const gestureRef = useRef<{ picks: PlanePoint[]; rings: PlanePoint[][] } | null>(null)
   const [shapeName, setShapeName] = useState('')
   const [distance, setDistance] = useState('')
   const [unit, setUnit] = useState<'mi' | 'km'>('mi')
@@ -388,6 +402,8 @@ export default function App() {
     setMode('trace')
     setPicks([])
     setTraceRings([])
+    setTraceHistory([])
+    gestureRef.current = null
     setShapeName('')
   }
 
@@ -395,39 +411,72 @@ export default function App() {
     setMode('none')
     setPicks([])
     setTraceRings([])
+    setTraceHistory([])
+    gestureRef.current = null
     setShapeName('')
   }
+
+  /** Snapshot the current trace onto the history stack (capped). */
+  const pushTraceHistory = useCallback(() => {
+    setTraceHistory((prev) => [...prev.slice(-199), { picks, rings: traceRings }])
+  }, [picks, traceRings])
+
+  const addTracePoint = useCallback(
+    (p: PlanePoint) => {
+      pushTraceHistory()
+      setPicks((prev) => [...prev, p])
+    },
+    [pushTraceHistory]
+  )
 
   /** Finish the current outline and start another island. */
   const newIsland = () => {
     if (picks.length < 3) return
+    pushTraceHistory()
     setTraceRings((prev) => [...prev, picks])
     setPicks([])
   }
 
-  /** Undo the last point; popping past the start re-opens the last island. */
+  /** Undo any edit — append, insert, move, or island commit. */
   const undoPoint = useCallback(() => {
-    if (picks.length) setPicks(picks.slice(0, -1))
-    else if (traceRings.length) {
-      setPicks(traceRings[traceRings.length - 1])
-      setTraceRings(traceRings.slice(0, -1))
-    }
+    if (!traceHistory.length) return
+    const last = traceHistory[traceHistory.length - 1]
+    setPicks(last.picks)
+    setTraceRings(last.rings)
+    setTraceHistory(traceHistory.slice(0, -1))
+    gestureRef.current = null
+  }, [traceHistory])
+
+  /** Views call this on pointer-down before a vertex drag or edge insert. */
+  const beginTraceEdit = useCallback(() => {
+    gestureRef.current = { picks, rings: traceRings }
   }, [picks, traceRings])
 
+  const commitGesture = () => {
+    const g = gestureRef.current
+    if (!g) return
+    gestureRef.current = null
+    setTraceHistory((prev) => [...prev.slice(-199), g])
+  }
+
   const moveTracePoint = useCallback((ring: number, i: number, p: PlanePoint) => {
+    commitGesture()
     if (ring < 0) setPicks((prev) => prev.map((q, j) => (j === i ? p : q)))
     else
       setTraceRings((prev) =>
         prev.map((r, ri) => (ri === ring ? r.map((q, j) => (j === i ? p : q)) : r))
       )
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   const insertTracePoint = useCallback((ring: number, i: number, p: PlanePoint) => {
+    commitGesture()
     if (ring < 0) setPicks((prev) => [...prev.slice(0, i), p, ...prev.slice(i)])
     else
       setTraceRings((prev) =>
         prev.map((r, ri) => (ri === ring ? [...r.slice(0, i), p, ...r.slice(i)] : r))
       )
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   // Ctrl/Cmd-Z undoes the last point, Escape abandons the trace. The name
@@ -607,9 +656,10 @@ export default function App() {
           picking={onEarth && mode === 'trace'}
           picks={onEarth && mode === 'trace' ? (picks as LonLat[]) : []}
           traceRings={onEarth && mode === 'trace' ? (traceRings as LonLat[][]) : []}
-          onPick={(p) => setPicks((prev) => [...prev, p])}
+          onPick={addTracePoint}
           onTraceMove={moveTracePoint}
           onTraceInsert={insertTracePoint}
+          onTraceEditStart={beginTraceEdit}
           onViewportChange={(v) =>
             setViewports((prev) => ({ ...prev, [EARTH_ID]: v }))
           }
@@ -628,13 +678,13 @@ export default function App() {
             picks={picks}
             traceRings={mode === 'trace' ? traceRings : []}
             traceEditing={mode === 'trace'}
-            onPick={(p) =>
-              setPicks((prev) =>
-                mode === 'calibrate' && prev.length >= 2 ? prev : [...prev, p]
-              )
-            }
+            onPick={(p) => {
+              if (mode === 'trace') addTracePoint(p)
+              else setPicks((prev) => (prev.length >= 2 ? prev : [...prev, p]))
+            }}
             onTraceMove={moveTracePoint}
             onTraceInsert={insertTracePoint}
+            onTraceEditStart={beginTraceEdit}
             initialViewport={viewports[activeId] as FlatViewport | undefined}
             onViewportChange={(v) =>
               setViewports((prev) => ({ ...prev, [activeId]: v }))
@@ -671,9 +721,9 @@ export default function App() {
             ＋ Island
           </button>
           <button
-            disabled={!picks.length && !traceRings.length}
+            disabled={!traceHistory.length}
             onClick={undoPoint}
-            title="Undo last point (Ctrl+Z)"
+            title="Undo (Ctrl+Z)"
           >
             ↩
           </button>

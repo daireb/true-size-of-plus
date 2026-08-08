@@ -190,8 +190,8 @@ decoded images cost 4 bytes/pixel regardless of PNG compression.
 floating toolbar at the bottom of the map. Click to add a point; press-drag
 still pans, so you can navigate mid-trace. Drag a vertex to move it, click an
 edge to insert a point there (and drag it in the same motion), Ctrl/Cmd-Z
-undoes point by point — past the start of an island it re-opens the previous
-one — and Escape abandons the trace. "＋ Island" finishes the current outline
+undoes any edit — appended points, vertex moves, edge inserts, island commits —
+one step at a time (a whole drag is one step), and Escape abandons the trace. "＋ Island" finishes the current outline
 and starts another, so archipelagos save as one multi-polygon shape whose area
 is the sum of its islands, with winding normalised per ring.
 

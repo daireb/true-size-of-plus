@@ -99,6 +99,18 @@ check('vertex dragged into place',
   Math.abs(afterMove.picks[2][0] - 2400) < 8 && Math.abs(afterMove.picks[2][1] - 1100) < 8,
   `corner now ${afterMove.picks[2].map(Math.round)}`)
 
+// Undo treats the whole drag as one step and restores the old position.
+await page.keyboard.press('Control+z')
+await page.waitForTimeout(150)
+const unMoved = await page.evaluate(() => window.__flat.trace())
+check('Ctrl+Z undoes a vertex move', Math.abs(unMoved.picks[2][0] - 2200) < 8,
+  `corner back at ${unMoved.picks[2].map(Math.round)}`)
+await page.mouse.move(vFrom[0], vFrom[1])
+await page.mouse.down()
+await page.mouse.move(vTo[0], vTo[1], { steps: 5 })
+await page.mouse.up()
+await page.waitForTimeout(150)
+
 // Click on the top edge inserts a point there (index 1, between its ends).
 const eMid = await page.evaluate(() => window.__flat.screenFromWorld([1900, 600]))
 await page.mouse.click(eMid[0], eMid[1])
@@ -109,9 +121,27 @@ check('click on an edge inserts a point there',
     Math.abs(afterInsert.picks[1][1] - 600) < 8,
   `${afterInsert.picks.length} picks, inserted at ${afterInsert.picks[1].map(Math.round)}`)
 
+// Undo removes the inserted point — not the last-appended one.
+await page.keyboard.press('Control+z')
+await page.waitForTimeout(150)
+const unInserted = await page.evaluate(() => window.__flat.trace())
+check('Ctrl+Z undoes an edge insert',
+  unInserted.picks.length === 4 && Math.abs(unInserted.picks[1][0] - 2400) < 8,
+  `${unInserted.picks.length} picks, picks[1] = ${unInserted.picks[1].map(Math.round)}`)
+await page.mouse.click(eMid[0], eMid[1]) // re-insert and carry on
+await page.waitForTimeout(150)
+
 // Second island.
 await page.click('.tracebar button[title^="Finish"]')
 check('island committed', (await page.evaluate(() => window.__flat.trace())).rings.length === 1)
+
+// Undo re-opens the committed island.
+await page.keyboard.press('Control+z')
+await page.waitForTimeout(150)
+const unIsland = await page.evaluate(() => window.__flat.trace())
+check('Ctrl+Z undoes an island commit', unIsland.rings.length === 0 && unIsland.picks.length === 5,
+  `${unIsland.rings.length} rings, ${unIsland.picks.length} picks`)
+await page.click('.tracebar button[title^="Finish"]')
 await clickWorld(2600, 1400)
 await clickWorld(3100, 1400)
 await clickWorld(3100, 1700)

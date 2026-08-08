@@ -133,6 +133,8 @@ interface Props {
   onPick: (p: LonLat) => void
   onTraceMove?: (ring: number, index: number, p: LonLat) => void
   onTraceInsert?: (ring: number, index: number, p: LonLat) => void
+  /** Called on mouse-down before a vertex drag or edge insert begins. */
+  onTraceEditStart?: () => void
   onViewportChange?: (v: EarthViewport) => void
 }
 
@@ -148,6 +150,7 @@ const EarthView = forwardRef<EarthViewHandle, Props>(function EarthView(
     onPick,
     onTraceMove,
     onTraceInsert,
+    onTraceEditStart,
     onViewportChange,
   },
   ref
@@ -163,6 +166,8 @@ const EarthView = forwardRef<EarthViewHandle, Props>(function EarthView(
   onTraceMoveRef.current = onTraceMove
   const onTraceInsertRef = useRef(onTraceInsert)
   onTraceInsertRef.current = onTraceInsert
+  const onTraceEditStartRef = useRef(onTraceEditStart)
+  onTraceEditStartRef.current = onTraceEditStart
   const traceStateRef = useRef({ picks, traceRings })
   traceStateRef.current = { picks, traceRings }
   /** Set when a mousedown was consumed by vertex/edge editing, so the click
@@ -375,6 +380,7 @@ const EarthView = forwardRef<EarthViewHandle, Props>(function EarthView(
     const onDown = (e: maplibregl.MapMouseEvent) => {
       const hit = hitTraceAt(e.point.x, e.point.y)
       if (!hit) return
+      onTraceEditStartRef.current?.()
       if (hit.kind === 'edge')
         onTraceInsertRef.current?.(hit.ring, hit.index, [e.lngLat.lng, e.lngLat.lat])
       editing = { ring: hit.ring, index: hit.index }

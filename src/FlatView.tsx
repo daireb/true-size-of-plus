@@ -32,6 +32,8 @@ interface Props {
   onPick: (p: PlanePoint) => void
   onTraceMove?: (ring: number, index: number, p: PlanePoint) => void
   onTraceInsert?: (ring: number, index: number, p: PlanePoint) => void
+  /** Called on pointer-down before a vertex drag or edge insert begins. */
+  onTraceEditStart?: () => void
   initialViewport?: FlatViewport
   onViewportChange?: (v: FlatViewport) => void
 }
@@ -73,6 +75,7 @@ const FlatView = forwardRef<FlatViewHandle, Props>(function FlatView(
     onPick,
     onTraceMove,
     onTraceInsert,
+    onTraceEditStart,
     initialViewport,
     onViewportChange,
   },
@@ -111,6 +114,8 @@ const FlatView = forwardRef<FlatViewHandle, Props>(function FlatView(
   onTraceMoveRef.current = onTraceMove
   const onTraceInsertRef = useRef(onTraceInsert)
   onTraceInsertRef.current = onTraceInsert
+  const onTraceEditStartRef = useRef(onTraceEditStart)
+  onTraceEditStartRef.current = onTraceEditStart
   const onViewportRef = useRef(onViewportChange)
   onViewportRef.current = onViewportChange
 
@@ -344,6 +349,7 @@ const FlatView = forwardRef<FlatViewHandle, Props>(function FlatView(
         if (propsRef.current.traceEditing) {
           const hit = hitTraceAt(sx, sy)
           if (hit) {
+            onTraceEditStartRef.current?.()
             if (hit.kind === 'edge') onTraceInsertRef.current?.(hit.ring, hit.index, [wx, wy])
             dragRef.current = { kind: 'trace-vertex', ring: hit.ring, index: hit.index }
             cv.setPointerCapture(e.pointerId)
