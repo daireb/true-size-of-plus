@@ -71,8 +71,10 @@ const vpA = await page.evaluate(() => window.__flat.viewport())
 await page.mouse.move(900, 480)
 await page.mouse.down()
 await page.mouse.move(840, 440, { steps: 4 })
-await page.mouse.up()
+// Read before release: after mouse.up an inertial glide may carry it further.
 const vpB = await page.evaluate(() => window.__flat.viewport())
+await page.mouse.up()
+await page.waitForTimeout(400) // let any glide settle
 const tPan = await page.evaluate(() => window.__flat.trace())
 check('drag pans instead of adding a point',
   Math.abs(vpB.tx - vpA.tx + 60) < 2 && tPan.picks.length === 3,

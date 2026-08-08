@@ -172,10 +172,12 @@ const vp0 = await page.evaluate(() => window.__flat.viewport())
 await page.mouse.move(1100, 700)
 await page.mouse.down()
 await page.mouse.move(1000, 650, { steps: 4 })
-await page.mouse.up()
+// Read before release: after mouse.up an inertial glide may carry it further.
 const vp1 = await page.evaluate(() => window.__flat.viewport())
 check('drag on empty space pans', Math.abs(vp1.tx - vp0.tx + 100) < 2 && Math.abs(vp1.ty - vp0.ty + 50) < 2,
   `dtx ${(vp1.tx - vp0.tx).toFixed(1)} dty ${(vp1.ty - vp0.ty).toFixed(1)}`)
+await page.mouse.up()
+await page.waitForTimeout(500) // let any glide settle
 await page.mouse.move(640, 400)
 await page.mouse.wheel(0, -400)
 await page.waitForTimeout(200)

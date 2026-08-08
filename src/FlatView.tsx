@@ -132,6 +132,13 @@ const FlatView = forwardRef<FlatViewHandle, Props>(function FlatView(
     | null
   >(null)
 
+  // Inertial-pan bookkeeping. Refs, not effect-locals: the interactions
+  // effect re-runs whenever the parent re-renders (its setPlaced prop is a
+  // fresh function each render), and the viewport commit on release causes
+  // exactly such a render — effect-local state would kill a glide instantly.
+  const glideRef = useRef(0)
+  const samplesRef = useRef<{ t: number; x: number; y: number }[]>([])
+
   // Path2D per subject, in local px (km / kmPerPixel), origin at its centroid.
   const pathCache = useRef(new Map<string, { rings: unknown; kpp: number; path: Path2D }>())
 
@@ -403,6 +410,55 @@ const FlatView = forwardRef<FlatViewHandle, Props>(function FlatView(
     /** Live screen position of every pressed pointer, for pinch-zoom. */
     const pointers = new Map<number, PlanePoint>()
 
+    // Inertial panning, to match MapLibre's feel on the Earth view: velocity
+    // is read from the last ~120ms of the gesture and decays exponentially.
+    const stopGlide = () => {
+      if (glideRef.current) cancelAnimationFrame(glideRef.current)
+      glideRef.current = 0
+    }
+    const sample = (e: PointerEvent) => {
+      const s = samplesRef.current
+      const now = performance.now()
+      s.push({ t: now, x: e.clientX, y: e.clientY })
+      while (s.length && now - s[0].t > 120) s.shift()
+    }
+    /** Returns true if a glide started; it commits the viewport when it rests. */
+    const startGlide = (): boolean => {
+      const s = samplesRef.current
+      if (s.length < 2) return false
+      const a = s[0]
+      const b = s[s.length - 1]
+      const dt = b.t - a.t
+      if (dt < 30) return false // a pause before release: no fling
+      let vx = (b.x - a.x) / dt
+      let vy = (b.y - a.y) / dt
+      const speed = Math.hypot(vx, vy)
+      if (speed < 0.05) return false
+      const MAX = 1.4 // px/ms, roughly MapLibre's clamp
+      if (speed > MAX) {
+        vx *= MAX / speed
+        vy *= MAX / speed
+      }
+      let last = performance.now()
+      const tick = () => {
+        glideRef.current = 0
+        const now = performance.now()
+        const step = now - last
+        last = now
+        const vp = vpRef.current
+        if (!vp) return
+        vpRef.current = { ...vp, tx: vp.tx + vx * step, ty: vp.ty + vy * step }
+        scheduleDraw()
+        const k = Math.exp(-step / 325)
+        vx *= k
+        vy *= k
+        if (Math.hypot(vx, vy) > 0.02) glideRef.current = requestAnimationFrame(tick)
+        else onViewportRef.current?.(vpRef.current)
+      }
+      glideRef.current = requestAnimationFrame(tick)
+      return true
+    }
+
     const capture = (id: number) => {
       // Synthetic events (tests) carry pointerIds the browser doesn't know.
       try {
@@ -458,6 +514,8 @@ const FlatView = forwardRef<FlatViewHandle, Props>(function FlatView(
       // Primary button only: right-click is deletion (contextmenu), and must
       // never fall through to add-a-point or start a pan.
       if (e.button !== 0) return
+      stopGlide()
+      samplesRef.current = [{ t: performance.now(), x: e.clientX, y: e.clientY }]
       const [sx, sy] = local(e)
       pointers.set(e.pointerId, [sx, sy])
       capture(e.pointerId)
@@ -554,6 +612,7 @@ const FlatView = forwardRef<FlatViewHandle, Props>(function FlatView(
     const onMove = (e: PointerEvent) => {
       if (pointers.has(e.pointerId)) pointers.set(e.pointerId, local(e))
       const drag = dragRef.current
+      if (drag?.kind === 'pan' || drag?.kind === 'maybe-pick') sample(e)
       if (drag?.kind === 'pinch') {
         const a = pointers.get(drag.p1)
         const b = pointers.get(drag.p2)
@@ -694,18 +753,22 @@ const FlatView = forwardRef<FlatViewHandle, Props>(function FlatView(
       if (drag?.kind === 'pan' && !drag.moved) onSelectRef.current(null)
       if (drag?.kind === 'trace-pan' && !drag.moved)
         onPickRef.current([drag.wx, drag.wy])
-      if (drag?.kind === 'maybe-pick') {
-        // Never moved: it was a click, so it places a point where it started.
-        if (!drag.moved) onPickRef.current([drag.wx, drag.wy])
-        else if (vpRef.current) onViewportRef.current?.(vpRef.current)
+      // Never moved: it was a click, so it places a point where it started.
+      if (drag?.kind === 'maybe-pick' && !drag.moved) onPickRef.current([drag.wx, drag.wy])
+      if (drag?.kind === 'pan' || drag?.kind === 'maybe-pick') {
+        // A fast release glides on; the glide commits the viewport when it
+        // rests. Committing here too would re-render the parent, and that
+        // re-registers these handlers — which must not kill the glide.
+        if (!(drag.moved && startGlide()) && vpRef.current)
+          onViewportRef.current?.(vpRef.current)
       }
-      if (drag?.kind === 'pan' && vpRef.current) onViewportRef.current?.(vpRef.current)
       cv.style.cursor = ''
       if (cv.hasPointerCapture(e.pointerId)) cv.releasePointerCapture(e.pointerId)
     }
 
     const onWheel = (e: WheelEvent) => {
       e.preventDefault()
+      stopGlide()
       const vp = vpRef.current ?? fitViewport()
       const [sx, sy] = local(e)
       const [wx, wy] = worldFromScreen(sx, sy)
@@ -747,6 +810,9 @@ const FlatView = forwardRef<FlatViewHandle, Props>(function FlatView(
     cv.addEventListener('pointerup', onUp)
     cv.addEventListener('pointercancel', onUp)
     cv.addEventListener('wheel', onWheel, { passive: false })
+    // Deliberately NOT cancelling the glide here: this effect re-runs on
+    // parent re-renders, and the glide must outlive those. Unmount cleanup
+    // is handled by its own effect below.
     return () => {
       cv.removeEventListener('dblclick', onDblClick)
       cv.removeEventListener('contextmenu', onContextMenu)
@@ -757,6 +823,9 @@ const FlatView = forwardRef<FlatViewHandle, Props>(function FlatView(
       cv.removeEventListener('wheel', onWheel)
     }
   }, [worldFromScreen, hitTest, setPlaced, setActiveUid, fitViewport, scheduleDraw])
+
+  // Unmount is the only thing that should cancel a running glide.
+  useEffect(() => () => cancelAnimationFrame(glideRef.current), [])
 
   useImperativeHandle(ref, () => ({
     viewCenter: () => {

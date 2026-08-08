@@ -175,7 +175,7 @@ const fv2 = await page.evaluate(() => window.__flat.viewport())
 check('pinch-in zooms back out', fv2.zoom < fv1.zoom * 0.5,
   `zoom ${fv1.zoom.toFixed(3)} -> ${fv2.zoom.toFixed(3)}`)
 
-// One-finger drag still pans (no regression from the pointer bookkeeping).
+// One-finger drag still pans, and a fast release keeps gliding (momentum).
 const pan0 = await page.evaluate(() => window.__flat.viewport())
 await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x: 200, y: 300, id: 0 }] })
 for (let s = 1; s <= 10; s++) {
@@ -183,11 +183,15 @@ for (let s = 1; s <= 10; s++) {
   await page.waitForTimeout(16)
 }
 await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] })
-await page.waitForTimeout(300)
-const pan1 = await page.evaluate(() => window.__flat.viewport())
+const atRelease = await page.evaluate(() => window.__flat.viewport())
+await page.waitForTimeout(700)
+const settled = await page.evaluate(() => window.__flat.viewport())
 check('one-finger drag still pans the flat canvas',
-  Math.abs(pan1.tx - pan0.tx + 80) < 6 && Math.abs(pan1.ty - pan0.ty + 40) < 6,
-  `dtx ${(pan1.tx - pan0.tx).toFixed(1)} dty ${(pan1.ty - pan0.ty).toFixed(1)}`)
+  atRelease.tx - pan0.tx < -70 && atRelease.ty - pan0.ty < -33,
+  `dtx ${(atRelease.tx - pan0.tx).toFixed(1)} dty ${(atRelease.ty - pan0.ty).toFixed(1)}`)
+check('release at speed glides on like MapLibre',
+  settled.tx < atRelease.tx - 15 && settled.ty < atRelease.ty - 7,
+  `glided a further ${(atRelease.tx - settled.tx).toFixed(0)}px`)
 
 console.log('\nconsole errors:', errors.length ? errors : 'none')
 if (errors.length) failures++
