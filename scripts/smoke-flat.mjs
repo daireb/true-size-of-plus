@@ -212,7 +212,7 @@ check('Earth becomes visible', await page.evaluate(() => {
 }))
 check('Earth session is separate (no Ireland here)',
   await page.evaluate(() => document.querySelectorAll('.placed li').length) === 0)
-await page.click('.chipwrap .chip')
+await page.click('.canvases .chip:not(.active):not(.add)')
 await page.waitForTimeout(600)
 check('back on the image canvas, subject still there',
   await page.evaluate(() => window.__flat?.count()) === 1)
@@ -220,11 +220,13 @@ check('back on the image canvas, subject still there',
 // --- delete: confirmation dialog -----------------------------------------------
 await page.click('[data-testid=map-settings]')
 await page.waitForTimeout(150)
+check('settings open in a modal', await page.isVisible('.modal') &&
+  (await page.textContent('.modal')).includes('Map settings'))
 await page.click('button[title="Delete map"]')
 await page.waitForTimeout(200)
 check('delete asks for confirmation naming the map',
   await page.isVisible('.modal') && (await page.textContent('.modal')).includes('testworld') &&
-    (await page.$$eval('.chipwrap', (els) => els.length)) === 1)
+    (await page.$$eval('.canvases .withgear', (els) => els.length)) === 1)
 await page.click('.modal button.danger')
 await page.waitForTimeout(600)
 check('deleting the canvas falls back to Earth',

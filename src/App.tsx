@@ -254,6 +254,12 @@ export default function App() {
     window.addEventListener('keydown', h)
     return () => window.removeEventListener('keydown', h)
   }, [confirm])
+  useEffect(() => {
+    if (!showSettings) return
+    const h = (e: KeyboardEvent) => e.key === 'Escape' && setShowSettings(false)
+    window.addEventListener('keydown', h)
+    return () => window.removeEventListener('keydown', h)
+  }, [showSettings])
 
   type Trash =
     | { kind: 'shape'; shape: CustomShape; placements: Record<string, AnyPlaced[]> }
@@ -934,6 +940,61 @@ export default function App() {
         </div>
       )}
 
+      {activeCanvas && showSettings && (
+        <div className="modal-overlay" onClick={() => setShowSettings(false)}>
+          <div className="modal" onClick={(e) => e.stopPropagation()}>
+            <strong>Map settings</strong>
+            <div className="distance">
+              <input
+                data-testid="rename-map"
+                value={nameDraft}
+                onChange={(e) => setNameDraft(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    renameCanvas(activeCanvas.id, nameDraft)
+                    setShowSettings(false)
+                  }
+                }}
+                onBlur={() => renameCanvas(activeCanvas.id, nameDraft)}
+                aria-label="Map name"
+              />
+            </div>
+            <p>
+              {activeCanvas.width.toLocaleString()} ×{' '}
+              {activeCanvas.height.toLocaleString()} px ·{' '}
+              {describeKm(activeCanvas.width * activeCanvas.kmPerPixel)} across ·
+              flat, uniform scale
+            </p>
+            <div className="campaign-actions">
+              <button
+                className="primary"
+                onClick={() => {
+                  setShowSettings(false)
+                  setMode('calibrate')
+                  setPicks([])
+                }}
+              >
+                Set scale
+              </button>
+              <button
+                title="Delete map"
+                onClick={() => {
+                  setShowSettings(false)
+                  setConfirm({
+                    title: `Delete map “${activeCanvas.name}”?`,
+                    body: 'Everything placed on it and its saved session go with it. You can undo for 12 seconds.',
+                    action: () => deleteCanvas(activeCanvas.id),
+                  })
+                }}
+              >
+                Delete map
+              </button>
+              <button onClick={() => setShowSettings(false)}>Close</button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {mode === 'trace' && (
         <div className="tracebar">
           <span className="count">
@@ -1011,31 +1072,50 @@ export default function App() {
           >
             🌍 Earth
           </button>
-          {canvases.map((c) => (
-            <span key={c.id} className={c.id === activeId ? 'chipwrap active' : 'chipwrap'}>
+          {canvases.map((c) =>
+            c.id === activeId ? (
+              // The active chip is one pill: its name plus a gear that opens
+              // the settings modal. A span, since buttons can't nest.
+              <span key={c.id} className="chip active withgear">
+                <button className="chiplabel" onClick={() => switchCanvas(c.id)} title={c.name}>
+                  {c.name}
+                </button>
+                <button
+                  className="gearbtn"
+                  data-testid="map-settings"
+                  title="Map settings"
+                  onClick={() => {
+                    setNameDraft(c.name)
+                    setShowSettings(true)
+                  }}
+                >
+                  <svg
+                    width="13"
+                    height="13"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2.2"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    aria-hidden="true"
+                  >
+                    <circle cx="12" cy="12" r="3.2" />
+                    <path d="M19.4 15a1.7 1.7 0 0 0 .34 1.87l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.7 1.7 0 0 0-1.87-.34 1.7 1.7 0 0 0-1 1.55V21a2 2 0 1 1-4 0v-.09a1.7 1.7 0 0 0-1-1.55 1.7 1.7 0 0 0-1.87.34l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.7 1.7 0 0 0 .34-1.87 1.7 1.7 0 0 0-1.55-1H3a2 2 0 1 1 0-4h.09a1.7 1.7 0 0 0 1.55-1 1.7 1.7 0 0 0-.34-1.87l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.7 1.7 0 0 0 1.87.34h.09a1.7 1.7 0 0 0 1-1.55V3a2 2 0 1 1 4 0v.09a1.7 1.7 0 0 0 1 1.55 1.7 1.7 0 0 0 1.87-.34l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.7 1.7 0 0 0-.34 1.87v.09a1.7 1.7 0 0 0 1.55 1H21a2 2 0 1 1 0 4h-.09a1.7 1.7 0 0 0-1.55 1z" />
+                  </svg>
+                </button>
+              </span>
+            ) : (
               <button
-                className={c.id === activeId ? 'chip active' : 'chip'}
+                key={c.id}
+                className="chip"
                 onClick={() => switchCanvas(c.id)}
                 title={c.name}
               >
                 {c.name}
               </button>
-              {c.id === activeId && (
-                <button
-                  className="chip gear"
-                  data-testid="map-settings"
-                  title="Map settings"
-                  aria-expanded={showSettings}
-                  onClick={() => {
-                    if (!showSettings && activeCanvas) setNameDraft(activeCanvas.name)
-                    setShowSettings(!showSettings)
-                  }}
-                >
-                  ⚙
-                </button>
-              )}
-            </span>
-          ))}
+            )
+          )}
           <button className="chip add" onClick={() => fileRef.current?.click()}>
             ＋ Add map
           </button>
@@ -1071,49 +1151,6 @@ export default function App() {
             ”.{' '}
             <button onClick={undoDelete}>Undo</button>
           </p>
-        )}
-
-        {activeCanvas && showSettings && mode !== 'calibrate' && (
-          <section className="card">
-            <div className="distance">
-              <input
-                data-testid="rename-map"
-                value={nameDraft}
-                onChange={(e) => setNameDraft(e.target.value)}
-                onKeyDown={(e) => e.key === 'Enter' && renameCanvas(activeCanvas.id, nameDraft)}
-                onBlur={() => renameCanvas(activeCanvas.id, nameDraft)}
-                aria-label="Map name"
-              />
-            </div>
-            <small>
-              {activeCanvas.width.toLocaleString()} × {activeCanvas.height.toLocaleString()} px
-              · flat, uniform scale
-            </small>
-            <div className="campaign-actions">
-              <button
-                className="primary"
-                onClick={() => {
-                  setMode('calibrate')
-                  setPicks([])
-                  setShowSettings(false)
-                }}
-              >
-                Set scale
-              </button>
-              <button
-                title="Delete map"
-                onClick={() =>
-                  setConfirm({
-                    title: `Delete map “${activeCanvas.name}”?`,
-                    body: 'Everything placed on it and its saved session go with it. You can undo for 12 seconds.',
-                    action: () => deleteCanvas(activeCanvas.id),
-                  })
-                }
-              >
-                Delete map
-              </button>
-            </div>
-          </section>
         )}
 
         {activeCanvas && mode === 'calibrate' && (

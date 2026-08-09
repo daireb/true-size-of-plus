@@ -284,7 +284,7 @@ const patchArea = await page.evaluate(() => {
 check('Earth trace area plausible (~128k km²)', /1[12][0-9],\d{3} km²/.test(patchArea), patchArea.replace(/\s+/g, ' '))
 
 // --- place the Earth trace on the image canvas ------------------------------------
-await page.click('.chipwrap .chip')
+await page.click('.canvases .chip:not(.active):not(.add)')
 await page.waitForFunction(() => !!window.__flat, null, { timeout: 10000 })
 await page.waitForTimeout(600)
 check('provenance shows where it differs', (await page.$$eval('.shapelist li .meta',
@@ -321,7 +321,7 @@ await page.waitForTimeout(800)
 const prov = await page.$$eval('.shapelist li .meta', (els) => els.map((e) => e.textContent.replace(/\s+/g, ' ')))
 check('shape provenance relabelled to the new name',
   prov.some((r) => r.includes('Testlands') && r.includes('from renamedworld')), prov.join(' | '))
-await page.click('.chipwrap .chip') // back to the image canvas
+await page.click('.canvases .chip:not(.active):not(.add)') // back to the image canvas
 await page.waitForFunction(() => !!window.__flat, null, { timeout: 10000 })
 await page.waitForTimeout(400)
 
