@@ -1,13 +1,13 @@
 {
-  "name": "true-size-of-plus",
+  "name": "worldscale",
   "version": "1.0.0",
   "description": "Drag countries around Earth to see past Mercator, or onto your own map at true size.",
   "license": "MIT",
   "author": "Daire Bohan",
-  "homepage": "https://daireb.github.io/true-size-of-plus/",
+  "homepage": "https://daireb.github.io/worldscale/",
   "repository": {
     "type": "git",
-    "url": "https://github.com/daireb/true-size-of-plus.git"
+    "url": "https://github.com/daireb/worldscale.git"
   },
   "private": true,
   "type": "module",

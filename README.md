@@ -1,6 +1,6 @@
-# true-size-of-plus
+# Worldscale
 
-**[Try it → daireb.github.io/true-size-of-plus](https://daireb.github.io/true-size-of-plus/)**
+**[Try it → daireb.github.io/worldscale](https://daireb.github.io/worldscale/)**
 
 A size-comparison map. Search a country and drag it across the globe to watch
 Mercator inflate and shrink it while its real area never moves — the familiar
@@ -118,6 +118,11 @@ Export writes everything — canvases with their images inlined as data URLs,
 shapes, and every canvas's session — to a single JSON file. Import reads one
 back and merges by id, so re-importing is idempotent. No accounts, no server;
 the file is the save.
+
+Snapshots carry an `app` tag identifying the format. The project was called
+`true-size-of-plus` before Worldscale, so import accepts that tag too — dropping
+it from `KNOWN_TAGS` would make every file exported before the rename
+unloadable.
 
 ---
 

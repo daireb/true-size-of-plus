@@ -345,7 +345,7 @@ export default function App() {
     const blob = new Blob([json], { type: 'application/json' })
     const a = document.createElement('a')
     a.href = URL.createObjectURL(blob)
-    a.download = `true-size-of-${new Date().toISOString().slice(0, 10)}.json`
+    a.download = `worldscale-${new Date().toISOString().slice(0, 10)}.json`
     a.click()
     URL.revokeObjectURL(a.href)
     setDataMsg('Exported.')
@@ -1041,7 +1041,7 @@ export default function App() {
 
       <aside className={panelOpen ? 'panel' : 'panel closed'}>
         <header onClick={() => isMobile() && setPanelOpen((o) => !o)}>
-          <h1>True Size Of</h1>
+          <h1>Worldscale</h1>
           <button
             className="iconbtn"
             onClick={(e) => {

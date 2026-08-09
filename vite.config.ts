@@ -6,5 +6,5 @@ export default defineConfig({
   plugins: [react()],
   // GitHub Pages serves project sites under /<repo>/. Only the deploy script
   // sets GHPAGES, so local dev and the smoke tests stay at plain /.
-  base: process.env.GHPAGES ? '/true-size-of-plus/' : '/',
+  base: process.env.GHPAGES ? '/worldscale/' : '/',
 })

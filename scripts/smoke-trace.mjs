@@ -41,7 +41,23 @@ await page.evaluate(async () => {
 })
 await page.waitForFunction(() => !!window.__flat, null, { timeout: 10000 })
 await page.waitForTimeout(800)
+/**
+ * Block until inertial panning has come to rest. Screen coordinates are
+ * meaningless while the viewport is still gliding, so every world-space click
+ * has to wait this out or it lands somewhere else entirely.
+ */
+const settle = async () => {
+  let prev = null
+  for (let i = 0; i < 60; i++) {
+    const vp = await page.evaluate(() => window.__flat?.viewport() ?? null)
+    if (!vp) return
+    if (prev && vp.tx === prev.tx && vp.ty === prev.ty && vp.zoom === prev.zoom) return
+    prev = vp
+    await page.waitForTimeout(50)
+  }
+}
 const clickWorld = async (wx, wy) => {
+  await settle()
   const [sx, sy] = await page.evaluate((p) => window.__flat.screenFromWorld(p), [wx, wy])
   await page.mouse.click(sx, sy)
   await page.waitForTimeout(120)
@@ -71,10 +87,13 @@ const vpA = await page.evaluate(() => window.__flat.viewport())
 await page.mouse.move(900, 480)
 await page.mouse.down()
 await page.mouse.move(840, 440, { steps: 4 })
-// Read before release: after mouse.up an inertial glide may carry it further.
+// Hold still before releasing. This asserts panning, not inertia: a deliberate
+// stop means zero release velocity, so the map lands on an exact, predictable
+// offset that the world-space clicks below can rely on.
+await page.waitForTimeout(250)
 const vpB = await page.evaluate(() => window.__flat.viewport())
 await page.mouse.up()
-await page.waitForTimeout(400) // let any glide settle
+await settle()
 const tPan = await page.evaluate(() => window.__flat.trace())
 check('drag pans instead of adding a point',
   Math.abs(vpB.tx - vpA.tx + 60) < 2 && tPan.picks.length === 3,

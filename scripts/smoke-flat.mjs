@@ -55,7 +55,19 @@ check('canvas chip created and active',
 check('calibration starts automatically', await page.isVisible('.calibrate'))
 
 // --- calibrate: two clicks 2000 image px apart, declared 1000 miles ---------
+/** Inertial panning must come to rest before screen coordinates mean anything. */
+const settle = async () => {
+  let prev = null
+  for (let i = 0; i < 60; i++) {
+    const vp = await page.evaluate(() => window.__flat?.viewport() ?? null)
+    if (!vp) return
+    if (prev && vp.tx === prev.tx && vp.ty === prev.ty && vp.zoom === prev.zoom) return
+    prev = vp
+    await page.waitForTimeout(50)
+  }
+}
 const clickWorld = async (wx, wy) => {
+  await settle()
   const [sx, sy] = await page.evaluate((p) => window.__flat.screenFromWorld(p), [wx, wy])
   await page.mouse.click(sx, sy)
   await page.waitForTimeout(150)
@@ -172,12 +184,20 @@ const vp0 = await page.evaluate(() => window.__flat.viewport())
 await page.mouse.move(1100, 700)
 await page.mouse.down()
 await page.mouse.move(1000, 650, { steps: 4 })
-// Read before release: after mouse.up an inertial glide may carry it further.
+// Hold still before releasing: this asserts panning, not inertia, and a
+// deliberate stop means no fling carries the map past the expected offset.
+await page.waitForTimeout(250)
 const vp1 = await page.evaluate(() => window.__flat.viewport())
 check('drag on empty space pans', Math.abs(vp1.tx - vp0.tx + 100) < 2 && Math.abs(vp1.ty - vp0.ty + 50) < 2,
   `dtx ${(vp1.tx - vp0.tx).toFixed(1)} dty ${(vp1.ty - vp0.ty).toFixed(1)}`)
 await page.mouse.up()
-await page.waitForTimeout(500) // let any glide settle
+await settle() // inertial pan must stop before the next screen-space assertion
+// Stopping before you let go means "leave it here" — velocity is windowed
+// against the release, so a stale pre-pause burst must not fling the map.
+const vpHeld = await page.evaluate(() => window.__flat.viewport())
+check('holding still before release does not fling',
+  Math.abs(vpHeld.tx - vp1.tx) < 1 && Math.abs(vpHeld.ty - vp1.ty) < 1,
+  `drifted ${(vpHeld.tx - vp1.tx).toFixed(1)}, ${(vpHeld.ty - vp1.ty).toFixed(1)} px after release`)
 await page.mouse.move(640, 400)
 await page.mouse.wheel(0, -400)
 await page.waitForTimeout(200)

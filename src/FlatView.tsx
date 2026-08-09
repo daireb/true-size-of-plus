@@ -424,12 +424,17 @@ const FlatView = forwardRef<FlatViewHandle, Props>(function FlatView(
     }
     /** Returns true if a glide started; it commits the viewport when it rests. */
     const startGlide = (): boolean => {
-      const s = samplesRef.current
+      // Window the samples against the moment of RELEASE, not against the last
+      // sample. Pruning only on new samples would leave a stale burst of speed
+      // sitting in the buffer, so dragging fast, holding still, then letting go
+      // would fling — the one gesture that most clearly means "stop here".
+      const now = performance.now()
+      const s = samplesRef.current.filter((p) => now - p.t <= 120)
       if (s.length < 2) return false
       const a = s[0]
       const b = s[s.length - 1]
       const dt = b.t - a.t
-      if (dt < 30) return false // a pause before release: no fling
+      if (dt < 30) return false // too brief to read a direction from
       let vx = (b.x - a.x) / dt
       let vy = (b.y - a.y) / dt
       const speed = Math.hypot(vx, vy)

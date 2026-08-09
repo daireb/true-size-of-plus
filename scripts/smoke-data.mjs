@@ -6,7 +6,7 @@
  * Run: node scripts/smoke-data.mjs   (dev server must be running)
  */
 import { chromium } from 'playwright'
-import { readFileSync } from 'node:fs'
+import { readFileSync, writeFileSync } from 'node:fs'
 
 const browser = await chromium.launch()
 let failures = 0
@@ -86,6 +86,7 @@ check('snapshot embeds the image', snap.canvases[0].image.startsWith('data:image
   `${(snap.canvases[0].image.length / 1024).toFixed(0)} KB data URL`)
 check('snapshot has the shape', snap.shapes.length === 1 && snap.shapes[0].name === 'Snapshotia')
 check('snapshot has the session', Object.values(snap.sessions).some((s) => s.placed?.length === 2))
+check('snapshot is tagged with the current app name', snap.app === 'worldscale', snap.app)
 await ctxA.close()
 
 // --- profile B: pristine, import ------------------------------------------------
@@ -121,6 +122,38 @@ check('placements rehydrate in the new profile',
   `${await b.evaluate(() => window.__flat.count())} subjects`)
 const names = await b.$$eval('.placed li .meta strong', (els) => els.map((e) => e.textContent))
 check('both subjects present by name', names.includes('Snapshotia') && names.includes('Ireland'), names.join(', '))
+
+// --- profile C: a snapshot exported before the Worldscale rename ----------------
+// The app tag is the format marker and import rejects unknown ones, so dropping
+// the pre-rename tag would quietly orphan every file saved before it.
+console.log('--- legacy snapshot (pre-rename app tag) ---')
+const legacyFile = 'scripts/out-snapshot-legacy.json'
+writeFileSync(legacyFile, JSON.stringify({ ...snap, app: 'true-size-of-plus' }))
+
+const ctxC = await browser.newContext({ viewport: { width: 1280, height: 800 } })
+const c = await ctxC.newPage()
+await c.goto('http://localhost:5173', { waitUntil: 'domcontentloaded' })
+await c.waitForFunction(() => !!window.__map, null, { timeout: 20000 })
+await c.waitForTimeout(1500)
+await c.setInputFiles('[data-testid=import-file]', legacyFile)
+await c.waitForTimeout(1200)
+await c.waitForFunction(() => !!window.__map, null, { timeout: 20000 })
+await c.waitForTimeout(2500)
+check('a pre-rename snapshot still imports',
+  await c.evaluate(() => [...document.querySelectorAll('.chip')].some((el) => el.textContent === 'exportworld')),
+  await c.evaluate(() => [...document.querySelectorAll('.chip')].map((el) => el.textContent).join(' | ')))
+
+// A genuinely foreign file must still be refused.
+const alienFile = 'scripts/out-snapshot-alien.json'
+writeFileSync(alienFile, JSON.stringify({ ...snap, app: 'some-other-app' }))
+await c.setInputFiles('[data-testid=import-file]', alienFile)
+await c.waitForTimeout(800)
+// The message lands in one of several .hint paragraphs, so scan them all.
+const hints = await c.$$eval('.hint', (els) => els.map((el) => el.textContent))
+check('a foreign file is still rejected',
+  hints.some((h) => /not a worldscale snapshot/i.test(h)),
+  hints.join(' | ').replace(/\s+/g, ' '))
+await ctxC.close()
 
 console.log('\npage errors:', errors.length ? errors : 'none')
 if (errors.length) failures++

@@ -117,6 +117,9 @@ export const freshId = (prefix: string) =>
 // IndexedDB rather than localStorage because canvases carry multi-megabyte
 // image blobs and localStorage caps at ~5 MB before base64 inflation.
 
+// Deliberately still the pre-Worldscale name. The database name IS the key
+// browsers store data under: renaming it would open a fresh, empty database
+// and every existing map, shape and session would silently vanish.
 const DB_NAME = 'true-size-of-plus'
 const DB_VERSION = 2
 
@@ -222,8 +225,13 @@ export const getSessions = async (): Promise<Record<string, StoredSession>> => {
 // server: the file IS the save. Import merges by id, so re-importing the same
 // snapshot is idempotent rather than duplicating.
 
+/** Current marker. Files written before the rename say 'true-size-of-plus'. */
+const APP_TAG = 'worldscale'
+/** Every marker import accepts — never drop one, or old saves stop loading. */
+const KNOWN_TAGS = [APP_TAG, 'true-size-of-plus']
+
 export interface Snapshot {
-  app: 'true-size-of-plus'
+  app: string
   version: 1
   exportedAt: string
   canvases: (Omit<ImageCanvasDef, 'blob'> & { image: string })[]
@@ -246,7 +254,7 @@ export const exportSnapshot = async (): Promise<string> => {
     getSessions(),
   ])
   const snap: Snapshot = {
-    app: 'true-size-of-plus',
+    app: APP_TAG,
     version: 1,
     exportedAt: new Date().toISOString(),
     canvases: await Promise.all(
@@ -265,8 +273,8 @@ export const importSnapshot = async (
   json: string
 ): Promise<{ canvases: number; shapes: number }> => {
   const snap = JSON.parse(json) as Snapshot
-  if (snap.app !== 'true-size-of-plus' || snap.version !== 1)
-    throw new Error('Not a true-size-of-plus snapshot file')
+  if (!KNOWN_TAGS.includes(snap.app) || snap.version !== 1)
+    throw new Error('Not a Worldscale snapshot file')
   for (const { image, ...def } of snap.canvases ?? []) {
     const blob = await (await fetch(image)).blob()
     await putCanvas({ ...def, blob })
